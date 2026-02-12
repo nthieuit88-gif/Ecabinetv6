@@ -129,11 +129,37 @@ export const DocumentList: React.FC<DocumentListProps> = ({
   };
 
   const handleDelete = async (id: string, docUrl?: string) => {
-    if (window.confirm('Bạn có chắc chắn muốn xóa tài liệu này?')) {
-        // Optional: Delete from storage if you want to clean up
-        // We would need the path from the URL to do this properly
-        onDeleteDocument(id);
+    if (!window.confirm('Bạn có chắc chắn muốn xóa tài liệu này? Hành động này không thể hoàn tác.')) {
+      return;
     }
+
+    // 1. Delete from Storage if URL exists
+    if (docUrl) {
+      try {
+        // Extract file path from URL
+        // Example URL: https://.../storage/v1/object/public/documents/filename.ext
+        // We need 'filename.ext'
+        const urlParts = docUrl.split('/documents/');
+        if (urlParts.length > 1) {
+           const filePath = decodeURIComponent(urlParts[1]);
+           console.log("Attempting to delete file from storage:", filePath);
+           
+           const { error: storageError } = await supabase.storage
+             .from('documents')
+             .remove([filePath]);
+             
+           if (storageError) {
+             console.error('Error deleting file from storage:', storageError);
+             alert("Cảnh báo: Không thể xóa file gốc từ hệ thống lưu trữ (Storage). Vẫn sẽ tiến hành xóa dữ liệu.");
+           }
+        }
+      } catch (e) {
+        console.error("Error parsing URL for storage deletion:", e);
+      }
+    }
+
+    // 2. Delete Record from DB (via App prop)
+    onDeleteDocument(id);
   };
 
   return (
