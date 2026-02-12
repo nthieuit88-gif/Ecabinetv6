@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { Shield, User as UserIcon, LogIn, MonitorPlay, Lock, X, CheckCircle2, Loader2, AlertTriangle } from 'lucide-react';
+import { Shield, User as UserIcon, LogIn, MonitorPlay, Lock, X, CheckCircle2, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 
 interface LoginScreenProps {
@@ -20,6 +20,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
   
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
 
   const handleUserClick = (user: User) => {
     setSelectedUser(user);
@@ -30,6 +31,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
          setPassword('Longphu26##');
     }
     setError('');
+    setIsRegistering(false);
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -40,24 +42,57 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
     setError('');
 
     try {
-      // Perform real authentication against Supabase
+      // 1. Try to Login first
       const { data, error: authError } = await supabase.auth.signInWithPassword({
         email: selectedUser.email,
         password: password
       });
 
       if (authError) {
-        throw authError;
+        // If login fails, checks if it is because of invalid credentials
+        // We will try to Auto-Register the user if they don't exist in Auth yet
+        if (authError.message === 'Invalid login credentials') {
+           console.log("Login failed, attempting auto-registration...");
+           setIsRegistering(true);
+           
+           // 2. Attempt Auto-Registration
+           const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+             email: selectedUser.email,
+             password: password,
+             options: {
+               data: {
+                 name: selectedUser.name,
+                 role: selectedUser.role
+               }
+             }
+           });
+
+           if (signUpError) {
+             // If signup also fails (e.g. user exists but password IS wrong), throw original error
+             if (signUpError.message.includes("already registered")) {
+                throw new Error("Mật khẩu không đúng (Tài khoản đã tồn tại).");
+             }
+             throw signUpError;
+           }
+
+           if (signUpData.session) {
+             // Registration successful and session created (Auto Login)
+             // App.tsx will catch this via onAuthStateChange
+             return; 
+           } else if (signUpData.user && !signUpData.session) {
+             throw new Error("Tài khoản đã được tạo nhưng cần xác thực email (Kiểm tra Supabase Settings).");
+           }
+        } else {
+          throw authError;
+        }
       }
       
       // Success is handled by App.tsx 'onAuthStateChange' listener
-      // We just wait or close modal (App will unmount this component anyway)
     } catch (err: any) {
-      console.error("Login Error:", err);
-      setError(err.message === 'Invalid login credentials' 
-        ? 'Mật khẩu không chính xác. Vui lòng thử lại.' 
-        : 'Lỗi đăng nhập: ' + err.message);
+      console.error("Login/Register Error:", err);
+      setError(err.message || 'Lỗi đăng nhập không xác định.');
       setIsLoading(false);
+      setIsRegistering(false);
     }
   };
 
@@ -227,7 +262,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
                         {isLoading ? (
                             <>
                                 <Loader2 className="w-5 h-5 animate-spin" />
-                                ĐANG XỬ LÝ...
+                                {isRegistering ? 'ĐANG TẠO TÀI KHOẢN...' : 'ĐANG XỬ LÝ...'}
                             </>
                         ) : (
                             <>
@@ -236,6 +271,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
                             </>
                         )}
                     </button>
+                    
+                    {/* Dev Hint */}
+                    <div className="text-center">
+                      <p className="text-[10px] text-slate-500">
+                        {isRegistering ? "Hệ thống đang tự động đăng ký tài khoản này..." : "Hệ thống tự động đồng bộ tài khoản nếu chưa tồn tại."}
+                      </p>
+                    </div>
                 </form>
             </div>
         </div>
