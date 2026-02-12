@@ -14,7 +14,8 @@
     "lucide-react": "^0.563.0",
     "react": "^19.2.4",
     "mammoth": "1.6.0",
-    "pdfjs-dist": "3.11.174"
+    "pdfjs-dist": "3.11.174",
+    "@supabase/supabase-js": "2.39.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
