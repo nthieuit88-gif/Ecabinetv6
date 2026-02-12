@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { FileText, FileSpreadsheet, FileIcon, Download, Trash2, Search, UploadCloud, Filter, Loader2 } from 'lucide-react';
 import { getUserById } from '../data';
 import { Document, User } from '../types';
+import { supabase } from '../supabaseClient';
 
 interface DocumentListProps {
   currentUser: User;
@@ -49,9 +50,11 @@ export const DocumentList: React.FC<DocumentListProps> = ({
 }) => {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isAdmin = currentUser.role === 'admin';
 
   useEffect(() => {
-    if (pendingAction === 'upload') {
+    // Only allow auto-open if admin
+    if (pendingAction === 'upload' && isAdmin) {
       if (fileInputRef.current) {
          try {
            fileInputRef.current.click();
@@ -61,42 +64,75 @@ export const DocumentList: React.FC<DocumentListProps> = ({
       }
       if (onActionComplete) onActionComplete();
     }
-  }, [pendingAction, onActionComplete]);
+  }, [pendingAction, onActionComplete, isAdmin]);
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
   };
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
     setIsUploading(true);
 
-    // Simulate network request delay
-    setTimeout(() => {
-      const newDoc: Document = {
-        id: Date.now().toString(),
-        name: file.name,
-        type: getFileType(file.name),
-        size: formatFileSize(file.size),
-        updatedAt: new Date().toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-        ownerId: currentUser.id, // Use current logged-in user
-      };
+    try {
+        // 1. Upload file to Supabase Storage 'documents' bucket
+        // Generate a unique file name to avoid collisions
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+        const filePath = `${fileName}`;
 
-      onAddDocument(newDoc);
-      setIsUploading(false);
-      
-      // Reset input value to allow uploading the same file again if needed
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    }, 1500);
+        const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('documents')
+            .upload(filePath, file, {
+                cacheControl: '3600',
+                upsert: false
+            });
+
+        if (uploadError) {
+            console.error('Upload error:', uploadError);
+            alert(`Lỗi upload: ${uploadError.message}`);
+            setIsUploading(false);
+            return;
+        }
+
+        // 2. Get Public URL
+        const { data: { publicUrl } } = supabase.storage
+            .from('documents')
+            .getPublicUrl(filePath);
+
+        // 3. Create Document Record
+        const newDoc: Document = {
+            id: Date.now().toString(), // Or use UUID if you prefer
+            name: file.name,
+            type: getFileType(file.name),
+            size: formatFileSize(file.size),
+            updatedAt: new Date().toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+            ownerId: currentUser.id,
+            url: publicUrl // Save the URL!
+        };
+
+        onAddDocument(newDoc);
+        
+        // Reset input
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+
+    } catch (error) {
+        console.error("Unexpected error during upload:", error);
+        alert("Có lỗi xảy ra trong quá trình tải lên.");
+    } finally {
+        setIsUploading(false);
+    }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string, docUrl?: string) => {
     if (window.confirm('Bạn có chắc chắn muốn xóa tài liệu này?')) {
-      onDeleteDocument(id);
+        // Optional: Delete from storage if you want to clean up
+        // We would need the path from the URL to do this properly
+        onDeleteDocument(id);
     }
   };
 
@@ -108,31 +144,35 @@ export const DocumentList: React.FC<DocumentListProps> = ({
           <p className="text-sm text-gray-500 mt-1">Quản lý và lưu trữ tài liệu cuộc họp</p>
         </div>
         
-        {/* Hidden File Input */}
-        <input 
-          type="file" 
-          ref={fileInputRef} 
-          className="hidden" 
-          onChange={handleFileChange}
-        />
+        {/* Only Render Upload Controls for Admin */}
+        {isAdmin && (
+          <>
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              className="hidden" 
+              onChange={handleFileChange}
+            />
 
-        <button 
-          onClick={handleUploadClick}
-          disabled={isUploading}
-          className={`bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors shadow-sm shadow-orange-200 ${isUploading ? 'opacity-70 cursor-wait' : ''}`}
-        >
-          {isUploading ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Đang tải lên...
-            </>
-          ) : (
-            <>
-              <UploadCloud className="w-4 h-4" />
-              Tải Lên
-            </>
-          )}
-        </button>
+            <button 
+              onClick={handleUploadClick}
+              disabled={isUploading}
+              className={`bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors shadow-sm shadow-orange-200 ${isUploading ? 'opacity-70 cursor-wait' : ''}`}
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Đang tải lên...
+                </>
+              ) : (
+                <>
+                  <UploadCloud className="w-4 h-4" />
+                  Tải Lên
+                </>
+              )}
+            </button>
+          </>
+        )}
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col">
@@ -174,7 +214,14 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                           {getFileIcon(doc.type)}
                         </div>
                         <div>
-                          <p className="font-medium text-gray-800 text-sm hover:text-emerald-600 cursor-pointer">{doc.name}</p>
+                          <a 
+                             href={doc.url} 
+                             target="_blank" 
+                             rel="noopener noreferrer"
+                             className="font-medium text-gray-800 text-sm hover:text-emerald-600 cursor-pointer block"
+                          >
+                             {doc.name}
+                          </a>
                           <p className="text-xs text-gray-400 uppercase mt-0.5">{doc.type}</p>
                         </div>
                       </div>
@@ -191,16 +238,28 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button className="p-2 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Tải xuống">
-                          <Download className="w-4 h-4" />
-                        </button>
-                        <button 
-                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg" 
-                          title="Xóa"
-                          onClick={() => handleDelete(doc.id)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {doc.url && (
+                          <a 
+                            href={doc.url} 
+                            target="_blank"
+                            download={doc.name}
+                            className="p-2 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg flex items-center justify-center" 
+                            title="Tải xuống"
+                          >
+                            <Download className="w-4 h-4" />
+                          </a>
+                        )}
+                        
+                        {/* Only Admin can delete */}
+                        {isAdmin && (
+                          <button 
+                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg" 
+                            title="Xóa"
+                            onClick={() => handleDelete(doc.id, doc.url)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -210,7 +269,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                 <tr>
                   <td colSpan={5} className="px-6 py-12 text-center text-gray-400">
                     <UploadCloud className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                    <p>Chưa có tài liệu nào. Hãy tải lên ngay!</p>
+                    <p>Chưa có tài liệu nào. {isAdmin && "Hãy tải lên ngay!"}</p>
                   </td>
                 </tr>
               )}

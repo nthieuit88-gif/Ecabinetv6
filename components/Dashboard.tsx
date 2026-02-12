@@ -124,7 +124,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentUser, onNavigate, m
 
         {/* Quick Actions - Takes 1 col */}
         <div className="lg:col-span-1">
-          <QuickActions onNavigate={onNavigate} />
+          <QuickActions currentUser={currentUser} onNavigate={onNavigate} />
         </div>
       </div>
 

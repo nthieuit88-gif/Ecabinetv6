@@ -68,4 +68,5 @@ export interface Document {
   size: string;
   updatedAt: string;
   ownerId: string; // Relational link to User
+  url?: string; // Link to the file in Supabase Storage
 }

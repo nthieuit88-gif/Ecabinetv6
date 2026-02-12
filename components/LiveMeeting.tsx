@@ -62,6 +62,8 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   // In a real app, this would come from a websocket/backend
   const otherParticipants = USERS.filter(u => u.id !== currentUser.id).slice(0, 4); 
 
+  const isAdmin = currentUser.role === 'admin';
+
   // --- Auto-hide Controls Logic ---
   const resetIdleTimer = () => {
     setShowControls(true);
@@ -162,6 +164,8 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                   size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
                   updatedAt: new Date().toLocaleDateString('vi-VN'),
                   ownerId: currentUser.id
+                  // NOTE: In live upload, we might not have URL immediately unless we upload to storage first.
+                  // For now, these simulated local uploads won't have a URL, but will have a File object in newFilesMap.
               };
               
               newDocs.push(newDoc);
@@ -210,33 +214,40 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   // Load DOCX or PDF content
   useEffect(() => {
     const loadContent = async () => {
-      // Logic: First try to find in uploadedFiles (local session uploads)
-      // If not found, check if it's a "fake" file (no binary content available in this mock version).
-      // In a real app, we would fetch from URL.
-      
       if (!previewDoc) return;
       
-      const file = uploadedFiles[previewDoc.id];
-      
-      if (!file) {
-        // If file is not in local memory, we can't preview it fully in this mock setup unless we fetch it.
-        // But the previous mock setup showed "Fake Mode" for documents without file objects.
-        // We just let it fall through to "Fake Mode" render.
-        return;
-      }
-
       setIsLoadingPreview(true);
 
       try {
+        let arrayBuffer: ArrayBuffer | null = null;
+        
+        // Strategy: 
+        // 1. Try to get from local file (uploaded in this session)
+        // 2. Try to fetch from URL (uploaded previously by admin to Supabase)
+        
+        const localFile = uploadedFiles[previewDoc.id];
+        
+        if (localFile) {
+            arrayBuffer = await localFile.arrayBuffer();
+        } else if (previewDoc.url) {
+            // Fetch from Supabase URL
+            const response = await fetch(previewDoc.url);
+            if (!response.ok) throw new Error("Could not fetch file from server");
+            arrayBuffer = await response.arrayBuffer();
+        }
+
+        if (!arrayBuffer) {
+           // Fallback to "Fake Mode" if no source is available
+           setIsLoadingPreview(false);
+           return;
+        }
+
         if (previewDoc.type === 'doc') {
           // Process DOCX
-          const arrayBuffer = await file.arrayBuffer();
           const result = await mammoth.convertToHtml({ arrayBuffer });
           setDocxContent(result.value);
         } else if (previewDoc.type === 'pdf') {
           // Process PDF
-          const arrayBuffer = await file.arrayBuffer();
-          
           const loadingTask = pdfjs.getDocument({ 
             data: arrayBuffer,
             cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
@@ -255,11 +266,10 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
           setTimeout(() => {
              setPdfScale(1.0); 
           }, 100);
-
         }
       } catch (error) {
         console.error("Error loading document:", error);
-        setDocxContent("<div class='p-4 bg-red-50 text-red-600 rounded-lg'>Không thể đọc nội dung file này. Lỗi định dạng hoặc file bị hỏng.</div>");
+        setDocxContent("<div class='p-4 bg-red-50 text-red-600 rounded-lg'>Không thể đọc nội dung file này. Lỗi kết nối hoặc định dạng file bị hỏng.</div>");
       } finally {
         setIsLoadingPreview(false);
       }
@@ -343,10 +353,10 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   const renderPreviewContent = () => {
     if (!previewDoc) return null;
 
-    // 1. Check if we have the actual file (Uploaded in this session)
-    const realFile = uploadedFiles[previewDoc.id];
+    // Determine if we have real content to show (Either local file OR remote URL)
+    const hasContent = uploadedFiles[previewDoc.id] || previewDoc.url;
 
-    if (realFile) {
+    if (hasContent) {
       // PDF Handling with Custom Viewer
       if (previewDoc.type === 'pdf') {
         if (isLoadingPreview) {
@@ -456,7 +466,6 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                 )}
 
                 {/* Scrollable Canvas Container */}
-                {/* REMOVED PADDING HERE p-4 -> p-0 */}
                 <div 
                     ref={containerRef} 
                     className={`w-full h-full overflow-auto flex justify-center book-container ${pageTransition}`}
@@ -484,8 +493,6 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
           );
         }
         return (
-          // FULL WIDTH/HEIGHT: w-full h-full, no max-w constraints.
-          // Padding px-8 py-8 kept for text readability inside the full container.
           <div className="bg-white text-slate-900 w-full h-full shadow-none overflow-y-auto px-8 py-8">
              <div 
                className="prose prose-slate max-w-none prose-headings:text-slate-800 prose-p:text-slate-600 prose-a:text-emerald-600 prose-lg mx-auto"
@@ -496,7 +503,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
       }
     }
 
-    // 2. Fallback for Mock Data (Files not actually present)
+    // 2. Fallback for Mock Data (Only if URL is missing AND no local file)
     return (
         <div className="bg-white text-slate-900 w-full h-full shadow-none px-8 py-8 overflow-y-auto">
           <div className="max-w-6xl mx-auto">
@@ -506,24 +513,9 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
             <div className="space-y-4 text-justify leading-relaxed text-slate-700 text-lg">
                 <div className="bg-amber-50 border-l-4 border-amber-500 p-4 mb-6">
                   <p className="text-amber-700 font-medium">Chế độ giả lập</p>
-                  <p className="text-sm text-amber-600 mt-1">Đây là tài liệu mẫu của hệ thống (không có file thực). Vui lòng <b>Tải lên từ máy tính</b> để trải nghiệm tính năng đọc nội dung thực tế (PDF & DOCX).</p>
+                  <p className="text-sm text-amber-600 mt-1">Hệ thống không tìm thấy nội dung file thực tế (URL hoặc file upload cục bộ).</p>
                 </div>
-
-                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
-                
-                <h2 className="text-2xl font-bold mt-8 mb-4 text-slate-800">1. Nội dung chính</h2>
-                <p>Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt.</p>
-                <p>Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit, sed quia non numquam eius modi tempora incidunt ut labore et dolore magnam aliquam quaerat voluptatem.</p>
-                <ul className="list-disc pl-5 space-y-2 my-4">
-                  <li>Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit.</li>
-                  <li>Sed quia consequuntur magni dolores eos qui ratione voluptatem sequi nesciunt.</li>
-                  <li>Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam.</li>
-                </ul>
-            </div>
-
-            <div className="mt-12 pt-8 border-t flex justify-between text-xs text-gray-400">
-                <span>Trang 1 / Demo</span>
-                <span>eCabinet Viewer v1.0</span>
+                <p>Nội dung hiển thị ở đây chỉ là văn bản mẫu do file gốc chưa được đồng bộ lên Storage.</p>
             </div>
           </div>
         </div>
@@ -533,14 +525,16 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   return (
     <div className="h-full flex flex-col bg-slate-900 text-white overflow-hidden relative">
       {/* Hidden File Input */}
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        className="hidden" 
-        accept=".pdf,.doc,.docx"
-        multiple
-        onChange={handleFileChange} 
-      />
+      {isAdmin && (
+        <input 
+          type="file" 
+          ref={fileInputRef} 
+          className="hidden" 
+          accept=".pdf,.doc,.docx"
+          multiple
+          onChange={handleFileChange} 
+        />
+      )}
 
       {/* Header */}
       <div className="h-16 px-6 flex items-center justify-between border-b border-slate-700 bg-slate-800/50 backdrop-blur-sm z-10 shrink-0 relative transition-transform duration-500">
@@ -641,13 +635,15 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
               <div className="flex-1 flex flex-col overflow-hidden">
                  <div className="p-4 flex-1 overflow-y-auto space-y-3">
                     {/* Add Doc Button (Admin only simulation) */}
-                    <button 
-                      onClick={() => setIsAddingDoc(!isAddingDoc)}
-                      className={`w-full py-2 border border-dashed ${isAddingDoc ? 'border-emerald-500 text-emerald-400 bg-emerald-500/10' : 'border-slate-600 text-slate-400 hover:text-white hover:border-slate-500 hover:bg-slate-700/50'} rounded-lg flex items-center justify-center gap-2 text-sm transition-all`}
-                    >
-                      {isAddingDoc ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                      {isAddingDoc ? 'Đóng' : 'Bổ sung tài liệu'}
-                    </button>
+                    {isAdmin && (
+                      <button 
+                        onClick={() => setIsAddingDoc(!isAddingDoc)}
+                        className={`w-full py-2 border border-dashed ${isAddingDoc ? 'border-emerald-500 text-emerald-400 bg-emerald-500/10' : 'border-slate-600 text-slate-400 hover:text-white hover:border-slate-500 hover:bg-slate-700/50'} rounded-lg flex items-center justify-center gap-2 text-sm transition-all`}
+                      >
+                        {isAddingDoc ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                        {isAddingDoc ? 'Đóng' : 'Bổ sung tài liệu'}
+                      </button>
+                    )}
 
                     {/* Add Doc Dropdown/Panel */}
                     {isAddingDoc && (
@@ -712,9 +708,20 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                                 >
                                   <Eye className="w-3 h-3" /> Xem
                                 </button>
-                                <button className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors text-slate-300 hover:text-white">
-                                  <Download className="w-3 h-3" /> Tải
-                                </button>
+                                {doc.url ? (
+                                    <a 
+                                      href={doc.url}
+                                      download
+                                      target="_blank"
+                                      className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors text-slate-300 hover:text-white"
+                                    >
+                                      <Download className="w-3 h-3" /> Tải
+                                    </a>
+                                ) : (
+                                    <button className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors text-slate-300 hover:text-white">
+                                      <Download className="w-3 h-3" /> Tải
+                                    </button>
+                                )}
                               </div>
                            </div>
                          ))

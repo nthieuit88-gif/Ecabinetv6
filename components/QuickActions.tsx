@@ -1,11 +1,26 @@
 import React from 'react';
 import { Plus, Presentation, Upload, UserPlus } from 'lucide-react';
+import { User } from '../types';
 
 interface QuickActionsProps {
+  currentUser: User;
   onNavigate: (tab: string, action?: string) => void;
 }
 
-export const QuickActions: React.FC<QuickActionsProps> = ({ onNavigate }) => {
+export const QuickActions: React.FC<QuickActionsProps> = ({ currentUser, onNavigate }) => {
+  // If not admin, do not show administrative actions
+  if (currentUser.role !== 'admin') {
+    return (
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-full flex items-center justify-center text-center">
+         <div>
+            <h3 className="text-base font-bold text-gray-800 mb-2">Thao Tác Nhanh</h3>
+            <p className="text-sm text-gray-500">Bạn đang đăng nhập với quyền Nhân viên.</p>
+            <p className="text-sm text-gray-500">Vui lòng liên hệ Admin để thực hiện các thay đổi hệ thống.</p>
+         </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-full">
       <h3 className="text-base font-bold text-gray-800 mb-5">Thao Tác Nhanh</h3>
