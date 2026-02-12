@@ -31,33 +31,30 @@ const App: React.FC = () => {
   const [tempMeeting, setTempMeeting] = useState<Meeting | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // --- GLOBAL STATE (Synced with Supabase) ---
-  const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
+  // --- GLOBAL STATE (Initialized with DEFAULTS for Offline First) ---
+  const [meetings, setMeetings] = useState<Meeting[]>(DEFAULT_MEETINGS);
+  const [rooms, setRooms] = useState<Room[]>(DEFAULT_ROOMS);
+  const [documents, setDocuments] = useState<Document[]>(DEFAULT_DOCUMENTS);
+  const [users, setUsers] = useState<User[]>(DEFAULT_USERS);
 
   // --- RESTORE SCROLL POSITION ---
   useEffect(() => {
-    // Check if we need to restore scroll position (set by DocumentList before reload)
     const savedScrollY = localStorage.getItem('ecabinet_scrollY');
     if (savedScrollY) {
       setTimeout(() => {
         window.scrollTo(0, parseInt(savedScrollY, 10));
-        localStorage.removeItem('ecabinet_scrollY'); // Clear after restoring
-      }, 100); // Small delay to ensure content renders
+        localStorage.removeItem('ecabinet_scrollY'); 
+      }, 100);
     }
   }, []);
 
   // --- SUPABASE AUTH LISTENER ---
   useEffect(() => {
     const checkUser = async () => {
-      // 1. Get current session
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session?.user) {
-         // 2. Fetch user profile details from 'users' table
-         const { data: userProfile, error } = await supabase
+         const { data: userProfile } = await supabase
            .from('users')
            .select('*')
            .eq('email', session.user.email)
@@ -66,30 +63,21 @@ const App: React.FC = () => {
          if (userProfile) {
            setCurrentUser(userProfile);
          } else if (session.user.email) {
-           // Fallback: Create a temp user object if profile doesn't exist in 'users' table yet
-           // This handles the case where Auth User exists but Profile doesn't
            setCurrentUser({
              id: session.user.id,
              name: session.user.user_metadata?.name || session.user.email.split('@')[0],
              email: session.user.email,
-             role: 'user', // Default
+             role: 'user',
              status: 'active',
              department: 'Chưa cập nhật'
            });
          }
-      } else {
-        // Do NOT set currentUser to null here if it was already set manually (e.g. via LoginScreen bypass)
-        // Only set null if we confirmed we are logged out and intended to be.
-        // For simplicity in this logic: if session is missing, we assume logged out UNLESS we are in "Mock Mode".
-        // However, on initial load, we want to show LoginScreen if no session.
-        // setCurrentUser(null);
       }
       setAuthLoading(false);
     };
 
     checkUser();
 
-    // 3. Listen for changes
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
          const { data: userProfile } = await supabase
@@ -101,7 +89,6 @@ const App: React.FC = () => {
          if (userProfile) {
            setCurrentUser(userProfile);
          } else {
-           // Fallback
            setCurrentUser({
              id: session.user.id,
              name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
@@ -128,29 +115,20 @@ const App: React.FC = () => {
     const fetchAllData = async () => {
       setLoading(true);
       try {
-        // Fetch Users with Fallback
         const { data: usersData } = await supabase.from('users').select('*');
-        // If Supabase returns empty (e.g., RLS blocking or no data), use DEFAULT_USERS
-        setUsers(usersData && usersData.length > 0 ? usersData : DEFAULT_USERS);
+        if (usersData && usersData.length > 0) setUsers(usersData);
 
-        // Fetch Rooms with Fallback
         const { data: roomsData } = await supabase.from('rooms').select('*');
-        setRooms(roomsData && roomsData.length > 0 ? roomsData : DEFAULT_ROOMS);
+        if (roomsData && roomsData.length > 0) setRooms(roomsData);
 
-        // Fetch Meetings with Fallback
         const { data: meetingsData } = await supabase.from('meetings').select('*');
-        setMeetings(meetingsData && meetingsData.length > 0 ? meetingsData : DEFAULT_MEETINGS);
+        if (meetingsData && meetingsData.length > 0) setMeetings(meetingsData);
 
-        // Fetch Documents with Fallback
         const { data: docsData } = await supabase.from('documents').select('*');
-        setDocuments(docsData && docsData.length > 0 ? docsData : DEFAULT_DOCUMENTS);
+        if (docsData && docsData.length > 0) setDocuments(docsData);
 
       } catch (error) {
-        console.error('Unexpected error fetching data, using defaults:', error);
-        setUsers(DEFAULT_USERS);
-        setRooms(DEFAULT_ROOMS);
-        setMeetings(DEFAULT_MEETINGS);
-        setDocuments(DEFAULT_DOCUMENTS);
+        console.error('Fetching data failed, keeping defaults:', error);
       } finally {
         setLoading(false);
       }
@@ -189,7 +167,7 @@ const App: React.FC = () => {
       supabase.removeChannel(documentsSubscription);
       supabase.removeChannel(meetingsSubscription);
     };
-  }, [currentUser]); // Re-fetch if user changes (permissions might change)
+  }, [currentUser]);
 
   const handleNavigate = (tab: string, action: string | null = null) => {
     setActiveTab(tab);
@@ -202,17 +180,12 @@ const App: React.FC = () => {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    // Force reset state in case Supabase event doesn't fire (e.g. offline mode)
     setCurrentUser(null);
     setActiveTab('dashboard');
   };
 
-  // --- DATA HANDLERS (CRUD with Supabase) ---
-  // ... (Keep existing handlers, Supabase client handles RLS automatically based on session)
-
   // MEETINGS
   const handleAddMeeting = async (newMeeting: Meeting) => {
-    // Optimistic UI update
     setMeetings(prev => [newMeeting, ...prev]);
     const { error } = await supabase.from('meetings').insert([newMeeting]);
     if (error) console.error('Error adding meeting:', error);
@@ -319,13 +292,11 @@ const App: React.FC = () => {
     return <div className="h-screen w-screen flex items-center justify-center bg-gray-900 text-emerald-500 font-bold">Đang xác thực hệ thống...</div>;
   }
 
-  // --- RENDER LOGIN SCREEN IF NO AUTHENTICATED USER ---
   if (!currentUser) {
-    // Pass setCurrentUser to allow "Local Auth" bypass if Supabase is disabled/erroring
+    // Falls back to local login handling if Supabase fails
     return <LoginScreen users={users} onSelectUser={(user) => setCurrentUser(user)} />;
   }
 
-  // --- MAIN APP CONTENT ---
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
