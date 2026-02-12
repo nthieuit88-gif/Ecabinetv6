@@ -212,7 +212,8 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     // --- DEMO MODE HANDLING ---
     // Inject fake content for demo documents without URLs (d1, d2, d4, d5)
     // d3 is PDF and has a real URL in data.ts, so it will fall through to standard loading.
-    if (['d1', 'd2', 'd4', 'd5'].includes(previewDoc.id)) {
+    // MODIFIED: Check !previewDoc.url so if we update DB with real URL, it takes precedence.
+    if (['d1', 'd2', 'd4', 'd5'].includes(previewDoc.id) && !previewDoc.url) {
         await new Promise(r => setTimeout(r, 800)); // Simulate loading delay
         
         let demoContent = '';

@@ -110,7 +110,8 @@ export const MEETINGS: Meeting[] = [
 
 // 4. Documents Data (Linked to Users)
 export const DOCUMENTS: Document[] = [
-  { id: 'd1', name: 'Bien_ban_cuoc_hop_tuan_4.docx', type: 'doc', size: '2.4 MB', updatedAt: '26/02/2024', ownerId: 'u1' },
+  // Added sample URL for d1 to match SQL
+  { id: 'd1', name: 'Bien_ban_cuoc_hop_tuan_4.docx', type: 'doc', size: '2.4 MB', updatedAt: '26/02/2024', ownerId: 'u1', url: 'https://filesamples.com/samples/document/docx/sample2.docx' },
   { id: 'd2', name: 'Bao_cao_tai_chinh_Q1.xlsx', type: 'xls', size: '5.1 MB', updatedAt: '25/02/2024', ownerId: 'u4' },
   // Add a valid sample PDF URL for d3 to make the demo work smoothly
   { 
