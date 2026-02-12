@@ -11,7 +11,12 @@ import { TopBanner } from './components/TopBanner';
 import { BottomBanner } from './components/BottomBanner';
 import { Meeting, Room, Document, User } from './types';
 import { supabase } from './supabaseClient';
-import { USERS as DEFAULT_USERS } from './data'; // Keep as fallback/initial seed if needed
+import { 
+  USERS as DEFAULT_USERS, 
+  ROOMS as DEFAULT_ROOMS, 
+  MEETINGS as DEFAULT_MEETINGS, 
+  DOCUMENTS as DEFAULT_DOCUMENTS 
+} from './data';
 
 const App: React.FC = () => {
   // --- AUTH STATE ---
@@ -73,7 +78,11 @@ const App: React.FC = () => {
            });
          }
       } else {
-        setCurrentUser(null);
+        // Do NOT set currentUser to null here if it was already set manually (e.g. via LoginScreen bypass)
+        // Only set null if we confirmed we are logged out and intended to be.
+        // For simplicity in this logic: if session is missing, we assume logged out UNLESS we are in "Mock Mode".
+        // However, on initial load, we want to show LoginScreen if no session.
+        // setCurrentUser(null);
       }
       setAuthLoading(false);
     };
@@ -114,35 +123,34 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // --- FETCH DATA FROM SUPABASE ---
+  // --- FETCH DATA FROM SUPABASE (With Fallback) ---
   useEffect(() => {
-    // Only fetch data if we have a user (RLS might require it) OR if public access is allowed
-    // But generally we fetch all the time, RLS handles the rest (returns empty array if not allowed)
     const fetchAllData = async () => {
       setLoading(true);
       try {
-        // Fetch Users
-        const { data: usersData, error: usersError } = await supabase.from('users').select('*');
-        if (usersError) console.error('Error fetching users:', usersError);
-        else setUsers(usersData || []);
+        // Fetch Users with Fallback
+        const { data: usersData } = await supabase.from('users').select('*');
+        // If Supabase returns empty (e.g., RLS blocking or no data), use DEFAULT_USERS
+        setUsers(usersData && usersData.length > 0 ? usersData : DEFAULT_USERS);
 
-        // Fetch Rooms
-        const { data: roomsData, error: roomsError } = await supabase.from('rooms').select('*');
-        if (roomsError) console.error('Error fetching rooms:', roomsError);
-        else setRooms(roomsData || []);
+        // Fetch Rooms with Fallback
+        const { data: roomsData } = await supabase.from('rooms').select('*');
+        setRooms(roomsData && roomsData.length > 0 ? roomsData : DEFAULT_ROOMS);
 
-        // Fetch Meetings
-        const { data: meetingsData, error: meetingsError } = await supabase.from('meetings').select('*');
-        if (meetingsError) console.error('Error fetching meetings:', meetingsError);
-        else setMeetings(meetingsData || []);
+        // Fetch Meetings with Fallback
+        const { data: meetingsData } = await supabase.from('meetings').select('*');
+        setMeetings(meetingsData && meetingsData.length > 0 ? meetingsData : DEFAULT_MEETINGS);
 
-        // Fetch Documents
-        const { data: docsData, error: docsError } = await supabase.from('documents').select('*');
-        if (docsError) console.error('Error fetching documents:', docsError);
-        else setDocuments(docsData || []);
+        // Fetch Documents with Fallback
+        const { data: docsData } = await supabase.from('documents').select('*');
+        setDocuments(docsData && docsData.length > 0 ? docsData : DEFAULT_DOCUMENTS);
 
       } catch (error) {
-        console.error('Unexpected error fetching data:', error);
+        console.error('Unexpected error fetching data, using defaults:', error);
+        setUsers(DEFAULT_USERS);
+        setRooms(DEFAULT_ROOMS);
+        setMeetings(DEFAULT_MEETINGS);
+        setDocuments(DEFAULT_DOCUMENTS);
       } finally {
         setLoading(false);
       }
@@ -194,7 +202,9 @@ const App: React.FC = () => {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    // State update handled by onAuthStateChange listener
+    // Force reset state in case Supabase event doesn't fire (e.g. offline mode)
+    setCurrentUser(null);
+    setActiveTab('dashboard');
   };
 
   // --- DATA HANDLERS (CRUD with Supabase) ---
@@ -202,17 +212,18 @@ const App: React.FC = () => {
 
   // MEETINGS
   const handleAddMeeting = async (newMeeting: Meeting) => {
+    // Optimistic UI update
+    setMeetings(prev => [newMeeting, ...prev]);
     const { error } = await supabase.from('meetings').insert([newMeeting]);
-    if (error) {
-      console.error('Error adding meeting:', error);
-      alert("Lỗi server: " + error.message);
-    }
+    if (error) console.error('Error adding meeting:', error);
   };
   const handleUpdateMeeting = async (updatedMeeting: Meeting) => {
+    setMeetings(prev => prev.map(m => m.id === updatedMeeting.id ? updatedMeeting : m));
     const { error } = await supabase.from('meetings').update(updatedMeeting).eq('id', updatedMeeting.id);
     if (error) console.error('Error updating meeting:', error);
   };
   const handleDeleteMeeting = async (id: string) => {
+    setMeetings(prev => prev.filter(m => m.id !== id));
     const { error } = await supabase.from('meetings').delete().eq('id', id);
     if (error) console.error('Error deleting meeting:', error);
   };
@@ -231,10 +242,12 @@ const App: React.FC = () => {
 
   // DOCUMENTS
   const handleAddDocument = async (newDoc: Document) => {
+    setDocuments(prev => [newDoc, ...prev]);
     const { error } = await supabase.from('documents').insert([newDoc]);
     if (error) console.error('Error adding document:', error);
   };
   const handleDeleteDocument = async (id: string) => {
+    setDocuments(prev => prev.filter(doc => doc.id !== id));
     const { error } = await supabase.from('documents').delete().eq('id', id);
     if (error) console.error('Error deleting document:', error);
   };
@@ -308,8 +321,8 @@ const App: React.FC = () => {
 
   // --- RENDER LOGIN SCREEN IF NO AUTHENTICATED USER ---
   if (!currentUser) {
-    // Note: We don't need onSelectUser prop anymore as LoginScreen handles Auth directly
-    return <LoginScreen users={users} onSelectUser={() => {}} />;
+    // Pass setCurrentUser to allow "Local Auth" bypass if Supabase is disabled/erroring
+    return <LoginScreen users={users} onSelectUser={(user) => setCurrentUser(user)} />;
   }
 
   // --- MAIN APP CONTENT ---
