@@ -1,40 +1,59 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { Shield, User as UserIcon, LogIn, MonitorPlay, Lock, X, CheckCircle2 } from 'lucide-react';
+import { Shield, User as UserIcon, LogIn, MonitorPlay, Lock, X, CheckCircle2, Loader2, AlertTriangle } from 'lucide-react';
+import { supabase } from '../supabaseClient';
 
 interface LoginScreenProps {
   users: User[];
-  onSelectUser: (user: User) => void;
+  onSelectUser: (user: User) => void; // Kept for type compatibility but deprecated in logic
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onSelectUser }) => {
+export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
   const admins = users.filter(u => u.role === 'admin');
   const regularUsers = users.filter(u => u.role !== 'admin');
 
-  // State for Admin Login Modal
-  const [selectedAdmin, setSelectedAdmin] = useState<User | null>(null);
-  const [password, setPassword] = useState('');
+  // Unified State for Login Modal
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  
+  // Default password set to 'Longphu26##' for easier testing
+  const [password, setPassword] = useState('Longphu26##');
+  
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleUserClick = (user: User) => {
-    if (user.role === 'admin') {
-      setSelectedAdmin(user);
-      setPassword('');
-      setError('');
-    } else {
-      onSelectUser(user);
-    }
+    setSelectedUser(user);
+    // Reset password to default test password when selecting a new user
+    setPassword('Longphu26##');
+    setError('');
   };
 
-  const handleAdminLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === 'Longphu25##') {
-      if (selectedAdmin) {
-        onSelectUser(selectedAdmin);
-        setSelectedAdmin(null);
+    if (!selectedUser) return;
+
+    setIsLoading(true);
+    setError('');
+
+    try {
+      // Perform real authentication against Supabase
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email: selectedUser.email,
+        password: password
+      });
+
+      if (authError) {
+        throw authError;
       }
-    } else {
-      setError('Mật khẩu không chính xác. Vui lòng thử lại.');
+      
+      // Success is handled by App.tsx 'onAuthStateChange' listener
+      // We just wait or close modal (App will unmount this component anyway)
+    } catch (err: any) {
+      console.error("Login Error:", err);
+      setError(err.message === 'Invalid login credentials' 
+        ? 'Mật khẩu không chính xác. Vui lòng thử lại.' 
+        : 'Lỗi đăng nhập: ' + err.message);
+      setIsLoading(false);
     }
   };
 
@@ -68,7 +87,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onSelectUser })
             Phòng Họp Không Giấy
           </h1>
           <p className="mt-4 text-slate-400 text-lg font-light tracking-wider uppercase border-t border-slate-700 pt-4 px-8">
-            Hệ thống quản lý eCabinet <span className="text-emerald-500 font-bold">v6.0</span>
+            Hệ thống quản lý eCabinet <span className="text-emerald-500 font-bold">v6.0</span> (Secured)
           </p>
         </div>
 
@@ -144,7 +163,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onSelectUser })
             </div>
         </div>
 
-        {/* Footer Credit in Login Screen */}
         <div className="mt-12 text-center">
             <p className="text-xs text-slate-600 font-medium">
                © 2024 N.TRUNG.HIẾU_CS | Bảo mật & Tin cậy
@@ -152,29 +170,31 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onSelectUser })
         </div>
       </div>
 
-      {/* Admin Login Modal */}
-      {selectedAdmin && (
+      {/* Unified Login Modal for Admin and Users */}
+      {selectedUser && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
-            <div className="bg-slate-900 border border-purple-500/30 rounded-2xl shadow-2xl w-full max-w-md p-8 relative animate-in zoom-in-95 duration-300">
+            <div className={`bg-slate-900 border ${selectedUser.role === 'admin' ? 'border-purple-500/30' : 'border-emerald-500/30'} rounded-2xl shadow-2xl w-full max-w-md p-8 relative animate-in zoom-in-95 duration-300`}>
                 <button 
-                  onClick={() => setSelectedAdmin(null)}
+                  onClick={() => setSelectedUser(null)}
                   className="absolute top-4 right-4 text-slate-500 hover:text-white p-1 hover:bg-slate-800 rounded-full transition-colors"
                 >
                   <X className="w-6 h-6" />
                 </button>
                 
                 <div className="flex flex-col items-center mb-8">
-                    <div className="w-20 h-20 bg-purple-500/10 rounded-full flex items-center justify-center mb-4 border border-purple-500/30 ring-4 ring-purple-900/20">
-                        <Lock className="w-10 h-10 text-purple-400" />
+                    <div className={`w-20 h-20 ${selectedUser.role === 'admin' ? 'bg-purple-500/10 border-purple-500/30' : 'bg-emerald-500/10 border-emerald-500/30'} rounded-full flex items-center justify-center mb-4 border ring-4 ring-slate-800`}>
+                        <Lock className={`w-10 h-10 ${selectedUser.role === 'admin' ? 'text-purple-400' : 'text-emerald-400'}`} />
                     </div>
-                    <h3 className="text-2xl font-bold text-white">Xác thực Admin</h3>
+                    <h3 className="text-2xl font-bold text-white">
+                        {selectedUser.role === 'admin' ? 'Xác thực Admin' : 'Đăng nhập người dùng'}
+                    </h3>
                     <div className="flex items-center gap-2 mt-2 px-3 py-1 bg-slate-800 rounded-full border border-slate-700">
-                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                        <p className="text-sm text-slate-300">{selectedAdmin.name}</p>
+                        <span className={`w-2 h-2 ${selectedUser.role === 'admin' ? 'bg-purple-500' : 'bg-emerald-500'} rounded-full animate-pulse`}></span>
+                        <p className="text-sm text-slate-300">{selectedUser.name}</p>
                     </div>
                 </div>
 
-                <form onSubmit={handleAdminLogin} className="space-y-6">
+                <form onSubmit={handleLogin} className="space-y-6">
                     <div className="relative">
                         <input 
                             type="password" 
@@ -184,23 +204,33 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onSelectUser })
                                 setPassword(e.target.value);
                                 setError('');
                             }}
-                            className={`w-full px-4 py-4 rounded-xl bg-slate-800 border ${error ? 'border-red-500/50 focus:ring-red-500/20' : 'border-slate-700 focus:ring-purple-500/30'} focus:border-purple-500 focus:ring-4 outline-none transition-all text-center tracking-[0.5em] text-xl text-white placeholder:text-slate-600 placeholder:tracking-normal`}
+                            className={`w-full px-4 py-4 rounded-xl bg-slate-800 border ${error ? 'border-red-500/50 focus:ring-red-500/20' : `border-slate-700 focus:ring-${selectedUser.role === 'admin' ? 'purple' : 'emerald'}-500/30`} focus:border-${selectedUser.role === 'admin' ? 'purple' : 'emerald'}-500 focus:ring-4 outline-none transition-all text-center tracking-[0.5em] text-xl text-white placeholder:text-slate-600 placeholder:tracking-normal`}
                             placeholder="NHẬP MẬT KHẨU"
                         />
                     </div>
                     
                     {error && (
                          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-center justify-center gap-2 text-red-400 text-sm animate-in slide-in-from-top-2">
-                             <Shield className="w-4 h-4" /> {error}
+                             <AlertTriangle className="w-4 h-4" /> {error}
                          </div>
                     )}
 
                     <button 
                         type="submit"
-                        className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-purple-900/40 active:scale-[0.98] flex items-center justify-center gap-2 group"
+                        disabled={isLoading}
+                        className={`w-full bg-gradient-to-r ${selectedUser.role === 'admin' ? 'from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500' : 'from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500'} text-white font-bold py-4 rounded-xl transition-all shadow-lg active:scale-[0.98] flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed`}
                     >
-                        <CheckCircle2 className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                        ĐĂNG NHẬP HỆ THỐNG
+                        {isLoading ? (
+                            <>
+                                <Loader2 className="w-5 h-5 animate-spin" />
+                                ĐANG XỬ LÝ...
+                            </>
+                        ) : (
+                            <>
+                                <CheckCircle2 className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                                ĐĂNG NHẬP
+                            </>
+                        )}
                     </button>
                 </form>
             </div>

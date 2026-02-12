@@ -16,6 +16,7 @@ import { USERS as DEFAULT_USERS } from './data'; // Keep as fallback/initial see
 const App: React.FC = () => {
   // --- AUTH STATE ---
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
   // Initialize activeTab from localStorage to persist state after reload
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem('ecabinet_activeTab') || 'dashboard');
@@ -43,8 +44,80 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // --- SUPABASE AUTH LISTENER ---
+  useEffect(() => {
+    const checkUser = async () => {
+      // 1. Get current session
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+         // 2. Fetch user profile details from 'users' table
+         const { data: userProfile, error } = await supabase
+           .from('users')
+           .select('*')
+           .eq('email', session.user.email)
+           .single();
+         
+         if (userProfile) {
+           setCurrentUser(userProfile);
+         } else if (session.user.email) {
+           // Fallback: Create a temp user object if profile doesn't exist in 'users' table yet
+           // This handles the case where Auth User exists but Profile doesn't
+           setCurrentUser({
+             id: session.user.id,
+             name: session.user.user_metadata?.name || session.user.email.split('@')[0],
+             email: session.user.email,
+             role: 'user', // Default
+             status: 'active',
+             department: 'Chưa cập nhật'
+           });
+         }
+      } else {
+        setCurrentUser(null);
+      }
+      setAuthLoading(false);
+    };
+
+    checkUser();
+
+    // 3. Listen for changes
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+         const { data: userProfile } = await supabase
+           .from('users')
+           .select('*')
+           .eq('email', session.user.email)
+           .single();
+           
+         if (userProfile) {
+           setCurrentUser(userProfile);
+         } else {
+           // Fallback
+           setCurrentUser({
+             id: session.user.id,
+             name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'User',
+             email: session.user.email || '',
+             role: 'user',
+             status: 'active',
+             department: 'Chưa cập nhật'
+           });
+         }
+      } else if (event === 'SIGNED_OUT') {
+        setCurrentUser(null);
+        setActiveTab('dashboard');
+        localStorage.setItem('ecabinet_activeTab', 'dashboard');
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
   // --- FETCH DATA FROM SUPABASE ---
   useEffect(() => {
+    // Only fetch data if we have a user (RLS might require it) OR if public access is allowed
+    // But generally we fetch all the time, RLS handles the rest (returns empty array if not allowed)
     const fetchAllData = async () => {
       setLoading(true);
       try {
@@ -68,11 +141,6 @@ const App: React.FC = () => {
         if (docsError) console.error('Error fetching documents:', docsError);
         else setDocuments(docsData || []);
 
-        // If no users in DB (first run), use default users but don't save back automatically to avoid conflicts
-        if (!usersData || usersData.length === 0) {
-           setUsers(DEFAULT_USERS); 
-        }
-
       } catch (error) {
         console.error('Unexpected error fetching data:', error);
       } finally {
@@ -83,7 +151,6 @@ const App: React.FC = () => {
     fetchAllData();
 
     // --- REALTIME SUBSCRIPTIONS ---
-    // This ensures Users see what Admin uploads immediately
     const documentsSubscription = supabase
       .channel('public:documents')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'documents' }, (payload) => {
@@ -114,11 +181,10 @@ const App: React.FC = () => {
       supabase.removeChannel(documentsSubscription);
       supabase.removeChannel(meetingsSubscription);
     };
-  }, []);
+  }, [currentUser]); // Re-fetch if user changes (permissions might change)
 
   const handleNavigate = (tab: string, action: string | null = null) => {
     setActiveTab(tab);
-    // Save to localStorage so we can stay on this tab after reload
     localStorage.setItem('ecabinet_activeTab', tab);
     
     if (action) {
@@ -126,21 +192,20 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
-    setActiveTab('dashboard'); // Reset tab
-    localStorage.setItem('ecabinet_activeTab', 'dashboard');
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    // State update handled by onAuthStateChange listener
   };
 
   // --- DATA HANDLERS (CRUD with Supabase) ---
+  // ... (Keep existing handlers, Supabase client handles RLS automatically based on session)
 
   // MEETINGS
   const handleAddMeeting = async (newMeeting: Meeting) => {
-    // Optimistic Update is handled by Realtime, but we keep local set for instant feedback on own device
     const { error } = await supabase.from('meetings').insert([newMeeting]);
     if (error) {
       console.error('Error adding meeting:', error);
-      alert("Lỗi khi lưu cuộc họp vào server: " + error.message);
+      alert("Lỗi server: " + error.message);
     }
   };
   const handleUpdateMeeting = async (updatedMeeting: Meeting) => {
@@ -200,22 +265,18 @@ const App: React.FC = () => {
   };
 
   const handleJoinRoom = (roomId: string) => {
-    // 1. Check if there is an ongoing meeting in this room from State
     const ongoingMeeting = meetings.find(m => m.roomId === roomId && m.status === 'ongoing');
-    
     if (ongoingMeeting) {
        setActiveMeetingId(ongoingMeeting.id);
        setTempMeeting(null);
     } else {
-       // 2. If not, create a temporary ad-hoc meeting
        const room = rooms.find(r => r.id === roomId);
        if (!room) return;
-       
        const adHocMeeting: Meeting = {
           id: `adhoc-${Date.now()}`,
           title: `Họp nhanh tại ${room.name}`,
           roomId: room.id,
-          hostId: currentUser?.id || 'u1', // Use current user as host
+          hostId: currentUser?.id || 'u1',
           startTime: new Date().toLocaleTimeString('vi-VN', {hour: '2-digit', minute:'2-digit'}),
           endTime: 'Unknown',
           date: new Date().toLocaleDateString('vi-VN'),
@@ -241,13 +302,14 @@ const App: React.FC = () => {
     setPendingAction(null);
   };
 
-  if (loading && !currentUser) {
-     return <div className="h-screen w-screen flex items-center justify-center bg-gray-50 text-emerald-600">Đang kết nối dữ liệu hệ thống...</div>
+  if (authLoading) {
+    return <div className="h-screen w-screen flex items-center justify-center bg-gray-900 text-emerald-500 font-bold">Đang xác thực hệ thống...</div>;
   }
 
-  // --- RENDER LOGIN SCREEN IF NO USER ---
+  // --- RENDER LOGIN SCREEN IF NO AUTHENTICATED USER ---
   if (!currentUser) {
-    return <LoginScreen users={users} onSelectUser={setCurrentUser} />;
+    // Note: We don't need onSelectUser prop anymore as LoginScreen handles Auth directly
+    return <LoginScreen users={users} onSelectUser={() => {}} />;
   }
 
   // --- MAIN APP CONTENT ---
@@ -337,22 +399,14 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-gray-50 font-sans">
-      {/* Sidebar - Hide in live meeting */}
       {activeTab !== 'live-meeting' && (
         <Sidebar activeTab={activeTab} setActiveTab={(tab) => handleNavigate(tab)} onLogout={handleLogout} />
       )}
-
-      {/* Main Content */}
       <main className={`flex-1 h-screen flex flex-col overflow-hidden ${activeTab !== 'live-meeting' ? 'ml-64' : 'ml-0'}`}>
-        {/* Render TopBanner ONLY if NOT in live-meeting */}
         {activeTab !== 'live-meeting' && <TopBanner />}
-        
-        {/* Scrollable Content Area */}
         <div className="flex-1 overflow-y-auto bg-gray-50">
            {renderContent()}
         </div>
-
-        {/* Render BottomBanner ONLY if NOT in live-meeting */}
         {activeTab !== 'live-meeting' && <BottomBanner />}
       </main>
     </div>

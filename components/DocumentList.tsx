@@ -40,6 +40,17 @@ const getFileType = (fileName: string): Document['type'] => {
   return 'other';
 };
 
+// Helper function to remove Vietnamese accents and special characters
+const sanitizeFileName = (fileName: string): string => {
+  // 1. Remove accents
+  let str = fileName.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  // 2. Replace spaces with underscores
+  str = str.replace(/\s+/g, '_');
+  // 3. Remove non-alphanumeric chars except dots and underscores
+  str = str.replace(/[^a-zA-Z0-9._-]/g, '');
+  return str;
+};
+
 export const DocumentList: React.FC<DocumentListProps> = ({ 
   currentUser,
   pendingAction, 
@@ -72,31 +83,24 @@ export const DocumentList: React.FC<DocumentListProps> = ({
 
   // Helper to force reload and keep scroll position
   const reloadPage = () => {
-    // Save current scroll position
     localStorage.setItem('ecabinet_scrollY', window.scrollY.toString());
-    // Force reload
     window.location.reload();
   };
 
   const handleEdit = async (doc: Document) => {
     const newName = window.prompt("Nhập tên mới cho tài liệu:", doc.name);
     
-    // User cancelled or entered empty string
     if (newName === null || newName.trim() === "") return;
-    if (newName === doc.name) return; // No change
+    if (newName === doc.name) return;
 
     try {
-        // Update in Supabase Database
         const { error } = await supabase
             .from('documents')
             .update({ name: newName })
             .eq('id', doc.id);
 
-        if (error) {
-            throw error;
-        }
+        if (error) throw error;
 
-        // Success Flow: Alert -> Reload
         alert("Cập nhật tên tài liệu thành công!");
         reloadPage();
 
@@ -113,12 +117,15 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     setIsUploading(true);
 
     try {
-        // 1. Upload file to Supabase Storage 'documents' bucket
-        // Generate a unique file name to avoid collisions
-        const fileExt = file.name.split('.').pop();
-        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-        const filePath = `${fileName}`;
+        // 1. Sanitize Filename to ensure valid URL
+        const originalName = file.name;
+        const cleanName = sanitizeFileName(originalName);
+        
+        // Generate unique path: timestamp_cleanName
+        // Example: "Báo Cáo.docx" -> "17098822_Bao_Cao.docx"
+        const filePath = `${Date.now()}_${cleanName}`;
 
+        // 2. Upload file to Supabase Storage
         const { data: uploadData, error: uploadError } = await supabase.storage
             .from('documents')
             .upload(filePath, file, {
@@ -128,27 +135,31 @@ export const DocumentList: React.FC<DocumentListProps> = ({
 
         if (uploadError) {
             console.error('Upload error:', uploadError);
-            alert(`Lỗi upload: ${uploadError.message}`);
-            setIsUploading(false);
-            return;
+            throw new Error(uploadError.message);
         }
 
-        // 2. Get Public URL
-        const { data: { publicUrl } } = supabase.storage
+        // 3. Get Public URL correctly using the returned path
+        // Note: uploadData.path is the key used in storage
+        const storagePath = uploadData?.path || filePath;
+        
+        const { data: publicUrlData } = supabase.storage
             .from('documents')
-            .getPublicUrl(filePath);
+            .getPublicUrl(storagePath);
 
-        // 3. Create Document Record
+        const publicUrl = publicUrlData.publicUrl;
+
+        // 4. Create Document Record in DB
         const newDoc: Document = {
-            id: Date.now().toString(), // Or use UUID if you prefer
-            name: file.name,
-            type: getFileType(file.name),
+            id: Date.now().toString(),
+            name: originalName, // Keep original display name
+            type: getFileType(originalName),
             size: formatFileSize(file.size),
             updatedAt: new Date().toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }),
             ownerId: currentUser.id,
-            url: publicUrl // Save the URL!
+            url: publicUrl // Save the valid URL
         };
 
+        // Call parent handler (Syncs to DB via App.tsx)
         onAddDocument(newDoc);
         
         // Reset input
@@ -156,9 +167,9 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             fileInputRef.current.value = '';
         }
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Unexpected error during upload:", error);
-        alert("Có lỗi xảy ra trong quá trình tải lên.");
+        alert(`Có lỗi xảy ra: ${error.message || "Không thể tải lên"}`);
     } finally {
         setIsUploading(false);
     }
@@ -172,9 +183,13 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     // 1. Delete from Storage if URL exists
     if (docUrl) {
       try {
+        // Parse URL to get file path
+        // URL format: .../storage/v1/object/public/documents/[filePath]
         const urlParts = docUrl.split('/documents/');
         if (urlParts.length > 1) {
+           // We must decodeURI to handle any encoded characters in the URL
            const filePath = decodeURIComponent(urlParts[1]);
+           console.log("Deleting storage file:", filePath);
            
            const { error: storageError } = await supabase.storage
              .from('documents')
@@ -190,19 +205,15 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     }
 
     // 2. Delete Record from DB
-    // Direct call to supabase here to ensure we wait for completion before reloading
     const { error: dbError } = await supabase.from('documents').delete().eq('id', id);
 
     if (dbError) {
         alert("Lỗi khi xóa dữ liệu: " + dbError.message);
     } else {
-        // 3. Success Feedback
         alert("Xóa tài liệu thành công!");
         reloadPage();
     }
     
-    // Note: We don't strictly need to call onDeleteDocument(id) prop if we reload, 
-    // but doing so updates local state in case reload fails or is slow.
     onDeleteDocument(id); 
   };
 
@@ -214,7 +225,6 @@ export const DocumentList: React.FC<DocumentListProps> = ({
           <p className="text-sm text-gray-500 mt-1">Quản lý và lưu trữ tài liệu cuộc họp</p>
         </div>
         
-        {/* Only Render Upload Controls for Admin */}
         {isAdmin && (
           <>
             <input 
@@ -320,7 +330,6 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                           </a>
                         )}
                         
-                        {/* Only Admin can Edit/Delete */}
                         {isAdmin && (
                           <>
                             <button 
