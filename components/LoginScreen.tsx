@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { Shield, User as UserIcon, LogIn, MonitorPlay, Lock, X, CheckCircle2, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Shield, User as UserIcon, LogIn, MonitorPlay, Lock, X, CheckCircle2, Loader2, AlertTriangle, RefreshCw, Mail } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 
 interface LoginScreenProps {
@@ -19,6 +19,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
   const [password, setPassword] = useState('');
   
   const [error, setError] = useState('');
+  const [infoMessage, setInfoMessage] = useState(''); // New state for non-error messages (e.g. email verification)
   const [isLoading, setIsLoading] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
 
@@ -31,6 +32,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
          setPassword('Longphu26##');
     }
     setError('');
+    setInfoMessage('');
     setIsRegistering(false);
   };
 
@@ -40,6 +42,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
 
     setIsLoading(true);
     setError('');
+    setInfoMessage('');
 
     try {
       // 1. Try to Login first
@@ -49,8 +52,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
       });
 
       if (authError) {
-        // If login fails, checks if it is because of invalid credentials
-        // We will try to Auto-Register the user if they don't exist in Auth yet
+        // Handle "Email not confirmed" specifically
+        if (authError.message.includes("Email not confirmed")) {
+            setInfoMessage("Vui lòng kiểm tra email để xác thực tài khoản trước khi đăng nhập.");
+            setIsLoading(false);
+            return;
+        }
+
+        // If login fails because invalid credentials (likely user doesn't exist in Auth yet)
         if (authError.message === 'Invalid login credentials') {
            console.log("Login failed, attempting auto-registration...");
            setIsRegistering(true);
@@ -70,7 +79,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
            if (signUpError) {
              // If signup also fails (e.g. user exists but password IS wrong), throw original error
              if (signUpError.message.includes("already registered")) {
-                throw new Error("Mật khẩu không đúng (Tài khoản đã tồn tại).");
+                throw new Error("Mật khẩu không đúng (Hoặc tài khoản đã tồn tại).");
              }
              throw signUpError;
            }
@@ -80,7 +89,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
              // App.tsx will catch this via onAuthStateChange
              return; 
            } else if (signUpData.user && !signUpData.session) {
-             throw new Error("Tài khoản đã được tạo nhưng cần xác thực email (Kiểm tra Supabase Settings).");
+             // SUCCESS BUT NEEDS VERIFICATION
+             // Do not throw error, just inform user
+             setInfoMessage("Tài khoản đã được tạo thành công! Hệ thống yêu cầu xác thực email. Vui lòng kiểm tra hộp thư của bạn.");
+             setIsLoading(false);
+             setIsRegistering(false);
+             return;
            }
         } else {
           throw authError;
@@ -242,15 +256,22 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
                             onChange={(e) => {
                                 setPassword(e.target.value);
                                 setError('');
+                                setInfoMessage('');
                             }}
-                            className={`w-full px-4 py-4 rounded-xl bg-slate-800 border ${error ? 'border-red-500/50 focus:ring-red-500/20' : `border-slate-700 focus:ring-${selectedUser.role === 'admin' ? 'purple' : 'emerald'}-500/30`} focus:border-${selectedUser.role === 'admin' ? 'purple' : 'emerald'}-500 focus:ring-4 outline-none transition-all text-center tracking-[0.5em] text-xl text-white placeholder:text-slate-600 placeholder:tracking-normal`}
+                            className={`w-full px-4 py-4 rounded-xl bg-slate-800 border ${error ? 'border-red-500/50 focus:ring-red-500/20' : infoMessage ? 'border-blue-500/50 focus:ring-blue-500/20' : `border-slate-700 focus:ring-${selectedUser.role === 'admin' ? 'purple' : 'emerald'}-500/30`} focus:border-${selectedUser.role === 'admin' ? 'purple' : 'emerald'}-500 focus:ring-4 outline-none transition-all text-center tracking-[0.5em] text-xl text-white placeholder:text-slate-600 placeholder:tracking-normal`}
                             placeholder="NHẬP MẬT KHẨU"
                         />
                     </div>
                     
                     {error && (
                          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-center justify-center gap-2 text-red-400 text-sm animate-in slide-in-from-top-2">
-                             <AlertTriangle className="w-4 h-4" /> {error}
+                             <AlertTriangle className="w-4 h-4 shrink-0" /> <span className="text-left">{error}</span>
+                         </div>
+                    )}
+
+                    {infoMessage && (
+                         <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 flex items-center justify-center gap-2 text-blue-400 text-sm animate-in slide-in-from-top-2">
+                             <Mail className="w-4 h-4 shrink-0" /> <span className="text-left">{infoMessage}</span>
                          </div>
                     )}
 
