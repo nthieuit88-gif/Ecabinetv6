@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare, Users, Share, MoreHorizontal, LayoutGrid, X, FileText, Plus, Eye, Download, ChevronRight, Search, UploadCloud, Loader2, ChevronLeft, Minus, ZoomIn, ZoomOut, Maximize, FileSpreadsheet, FileIcon } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare, Users, Share, MoreHorizontal, LayoutGrid, X, FileText, Plus, Eye, Download, ChevronRight, Search, UploadCloud, Loader2, ChevronLeft, Minus, ZoomIn, ZoomOut, Maximize, FileSpreadsheet, FileIcon, RefreshCw, AlertTriangle } from 'lucide-react';
 import { Meeting, Document, User } from '../types';
 import { USERS, getUserById } from '../data';
 import mammoth from 'mammoth';
@@ -39,7 +39,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   const [isAddingDoc, setIsAddingDoc] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Store actual File objects for uploaded files to enable preview
+  // Store actual File objects for uploaded files to enable preview (Local Session only)
   const [uploadedFiles, setUploadedFiles] = useState<Record<string, File>>({});
   
   // DOCX State
@@ -57,6 +57,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   const [pageTransition, setPageTransition] = useState<'none' | 'flipping-next' | 'flipping-prev'>('none');
   
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Mock participants based on USERS data, excluding current user to avoid duplicate
   // In a real app, this would come from a websocket/backend
@@ -200,83 +201,89 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
 
   // --- PREVIEW LOGIC ---
 
-  // Reset state when opening a new doc
+  const loadContent = async () => {
+    if (!previewDoc) return;
+    
+    setIsLoadingPreview(true);
+    setLoadError(null);
+    setDocxContent(null);
+    setPdfDoc(null);
+
+    try {
+      let arrayBuffer: ArrayBuffer | null = null;
+      
+      // Strategy: 
+      // 1. Try to get from local file (uploaded in this session)
+      // 2. Try to fetch from URL (uploaded previously by admin to Supabase)
+      
+      const localFile = uploadedFiles[previewDoc.id];
+      
+      if (localFile) {
+          arrayBuffer = await localFile.arrayBuffer();
+      } else if (previewDoc.url) {
+          // Fetch from Supabase URL
+          try {
+            const response = await fetch(previewDoc.url);
+            if (!response.ok) throw new Error(`Server returned ${response.status} ${response.statusText}`);
+            arrayBuffer = await response.arrayBuffer();
+          } catch (fetchErr: any) {
+             console.error("Network fetch failed:", fetchErr);
+             throw new Error("Không thể tải file từ máy chủ. Vui lòng kiểm tra kết nối mạng hoặc quyền truy cập file.");
+          }
+      } else {
+        // No URL and No Local File
+        // We will let this fall through to trigger the "Missing URL" state in the UI
+      }
+
+      if (!arrayBuffer) {
+         setIsLoadingPreview(false);
+         // If we have a URL but failed to get buffer, the catch block handled it.
+         // If we DON'T have a URL, we stay with null arrayBuffer, which is handled in render.
+         return;
+      }
+
+      if (previewDoc.type === 'doc') {
+        // Process DOCX
+        const result = await mammoth.convertToHtml({ arrayBuffer });
+        setDocxContent(result.value);
+      } else if (previewDoc.type === 'pdf') {
+        // Process PDF
+        const loadingTask = pdfjs.getDocument({ 
+          data: arrayBuffer,
+          cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+          cMapPacked: true,
+        });
+        
+        const pdf = await loadingTask.promise;
+        setPdfDoc(pdf);
+        setPdfTotalPages(pdf.numPages);
+        setPdfPageNum(1);
+
+        // Prepare Page 1 to ensure it's ready
+        await pdf.getPage(1);
+        
+        // Set scale to 100% (1.0) by default as requested
+        setTimeout(() => {
+           setPdfScale(1.0); 
+        }, 100);
+      }
+    } catch (error: any) {
+      console.error("Error loading document:", error);
+      setLoadError(error.message || "Lỗi không xác định khi đọc tài liệu.");
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  };
+
+  // Trigger load when previewDoc changes
   useEffect(() => {
-    if (!previewDoc) {
-      setDocxContent(null);
-      setPdfDoc(null);
-      setPdfPageNum(1);
-      setPdfScale(1.0); // Reset to 1 initially, but loadContent will adjust
-      setPageTransition('none');
+    if (previewDoc) {
+        setPdfPageNum(1);
+        setPdfScale(1.0);
+        setPageTransition('none');
+        loadContent();
     }
   }, [previewDoc]);
-
-  // Load DOCX or PDF content
-  useEffect(() => {
-    const loadContent = async () => {
-      if (!previewDoc) return;
-      
-      setIsLoadingPreview(true);
-
-      try {
-        let arrayBuffer: ArrayBuffer | null = null;
-        
-        // Strategy: 
-        // 1. Try to get from local file (uploaded in this session)
-        // 2. Try to fetch from URL (uploaded previously by admin to Supabase)
-        
-        const localFile = uploadedFiles[previewDoc.id];
-        
-        if (localFile) {
-            arrayBuffer = await localFile.arrayBuffer();
-        } else if (previewDoc.url) {
-            // Fetch from Supabase URL
-            const response = await fetch(previewDoc.url);
-            if (!response.ok) throw new Error("Could not fetch file from server");
-            arrayBuffer = await response.arrayBuffer();
-        }
-
-        if (!arrayBuffer) {
-           // Fallback to "Fake Mode" if no source is available
-           setIsLoadingPreview(false);
-           return;
-        }
-
-        if (previewDoc.type === 'doc') {
-          // Process DOCX
-          const result = await mammoth.convertToHtml({ arrayBuffer });
-          setDocxContent(result.value);
-        } else if (previewDoc.type === 'pdf') {
-          // Process PDF
-          const loadingTask = pdfjs.getDocument({ 
-            data: arrayBuffer,
-            cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
-            cMapPacked: true,
-          });
-          
-          const pdf = await loadingTask.promise;
-          setPdfDoc(pdf);
-          setPdfTotalPages(pdf.numPages);
-          setPdfPageNum(1);
-
-          // Prepare Page 1 to ensure it's ready
-          await pdf.getPage(1);
-          
-          // Set scale to 100% (1.0) by default as requested
-          setTimeout(() => {
-             setPdfScale(1.0); 
-          }, 100);
-        }
-      } catch (error) {
-        console.error("Error loading document:", error);
-        setDocxContent("<div class='p-4 bg-red-50 text-red-600 rounded-lg'>Không thể đọc nội dung file này. Lỗi kết nối hoặc định dạng file bị hỏng.</div>");
-      } finally {
-        setIsLoadingPreview(false);
-      }
-    };
-
-    loadContent();
-  }, [previewDoc, uploadedFiles]);
 
   // Render PDF Page when state changes
   useEffect(() => {
@@ -353,21 +360,42 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   const renderPreviewContent = () => {
     if (!previewDoc) return null;
 
+    // Loading State
+    if (isLoadingPreview) {
+      return (
+         <div className="flex flex-col items-center justify-center h-full text-slate-500">
+           <Loader2 className="w-10 h-10 animate-spin mb-3 text-emerald-500" />
+           <p>Đang tải tài liệu...</p>
+        </div>
+      );
+    }
+
+    // Error State
+    if (loadError) {
+       return (
+          <div className="flex flex-col items-center justify-center h-full max-w-md mx-auto text-center px-6">
+             <div className="bg-red-500/10 p-4 rounded-full mb-4">
+                <AlertTriangle className="w-10 h-10 text-red-500" />
+             </div>
+             <h3 className="text-xl font-bold text-white mb-2">Không thể tải tài liệu</h3>
+             <p className="text-slate-400 mb-6">{loadError}</p>
+             <button 
+                onClick={loadContent}
+                className="flex items-center gap-2 px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors font-medium"
+             >
+                <RefreshCw className="w-4 h-4" /> Thử lại
+             </button>
+          </div>
+       );
+    }
+
     // Determine if we have real content to show (Either local file OR remote URL)
     const hasContent = uploadedFiles[previewDoc.id] || previewDoc.url;
+    const hasLoadedData = pdfDoc || docxContent;
 
-    if (hasContent) {
+    if (hasContent && hasLoadedData) {
       // PDF Handling with Custom Viewer
       if (previewDoc.type === 'pdf') {
-        if (isLoadingPreview) {
-          return (
-             <div className="flex flex-col items-center justify-center h-full text-slate-500">
-               <Loader2 className="w-10 h-10 animate-spin mb-3 text-emerald-500" />
-               <p>Đang tải tài liệu PDF...</p>
-            </div>
-          );
-        }
-
         return (
           <div className="flex flex-col h-full w-full bg-slate-900 rounded-none overflow-hidden relative shadow-2xl">
              <style>{`
@@ -484,14 +512,6 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
 
       // DOCX Handling
       if (previewDoc.type === 'doc') {
-        if (isLoadingPreview) {
-          return (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500">
-               <Loader2 className="w-10 h-10 animate-spin mb-3 text-emerald-500" />
-               <p>Đang xử lý nội dung văn bản...</p>
-            </div>
-          );
-        }
         return (
           <div className="bg-white text-slate-900 w-full h-full shadow-none overflow-y-auto px-8 py-8">
              <div 
@@ -503,7 +523,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
       }
     }
 
-    // 2. Fallback for Mock Data (Only if URL is missing AND no local file)
+    // 2. Fallback if URL is missing
     return (
         <div className="bg-white text-slate-900 w-full h-full shadow-none px-8 py-8 overflow-y-auto">
           <div className="max-w-6xl mx-auto">
@@ -512,10 +532,20 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
             
             <div className="space-y-4 text-justify leading-relaxed text-slate-700 text-lg">
                 <div className="bg-amber-50 border-l-4 border-amber-500 p-4 mb-6">
-                  <p className="text-amber-700 font-medium">Chế độ giả lập</p>
-                  <p className="text-sm text-amber-600 mt-1">Hệ thống không tìm thấy nội dung file thực tế (URL hoặc file upload cục bộ).</p>
+                  <p className="text-amber-700 font-medium">File chưa có liên kết thực (Missing URL)</p>
+                  <p className="text-sm text-amber-600 mt-1">
+                     Hệ thống nhận diện file này chưa có đường dẫn (URL) lưu trữ trên server. 
+                     Có thể file được tải lên trước khi tính năng lưu trữ được kích hoạt, hoặc quá trình đồng bộ bị lỗi.
+                  </p>
                 </div>
-                <p>Nội dung hiển thị ở đây chỉ là văn bản mẫu do file gốc chưa được đồng bộ lên Storage.</p>
+                
+                <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 text-sm text-blue-800">
+                    <p className="font-bold mb-1">Hướng dẫn khắc phục:</p>
+                    <ul className="list-disc pl-5 space-y-1">
+                        <li>Nếu bạn là Admin: Vui lòng xóa file này và tải lên lại trong mục "Tài liệu".</li>
+                        <li>Nếu bạn là User: Vui lòng liên hệ Admin để cập nhật lại file này.</li>
+                    </ul>
+                </div>
             </div>
           </div>
         </div>

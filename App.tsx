@@ -67,6 +67,39 @@ const App: React.FC = () => {
     };
 
     fetchAllData();
+
+    // --- REALTIME SUBSCRIPTIONS ---
+    // This ensures Users see what Admin uploads immediately
+    const documentsSubscription = supabase
+      .channel('public:documents')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'documents' }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          setDocuments((prev) => [payload.new as Document, ...prev]);
+        } else if (payload.eventType === 'DELETE') {
+          setDocuments((prev) => prev.filter((doc) => doc.id !== payload.old.id));
+        } else if (payload.eventType === 'UPDATE') {
+           setDocuments((prev) => prev.map((doc) => doc.id === payload.new.id ? payload.new as Document : doc));
+        }
+      })
+      .subscribe();
+
+    const meetingsSubscription = supabase
+      .channel('public:meetings')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'meetings' }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          setMeetings((prev) => [payload.new as Meeting, ...prev]);
+        } else if (payload.eventType === 'DELETE') {
+          setMeetings((prev) => prev.filter((m) => m.id !== payload.old.id));
+        } else if (payload.eventType === 'UPDATE') {
+           setMeetings((prev) => prev.map((m) => m.id === payload.new.id ? payload.new as Meeting : m));
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(documentsSubscription);
+      supabase.removeChannel(meetingsSubscription);
+    };
   }, []);
 
   const handleNavigate = (tab: string, action: string | null = null) => {
@@ -85,22 +118,18 @@ const App: React.FC = () => {
 
   // MEETINGS
   const handleAddMeeting = async (newMeeting: Meeting) => {
-    // Optimistic Update
-    setMeetings(prev => [newMeeting, ...prev]);
+    // Optimistic Update is handled by Realtime, but we keep local set for instant feedback on own device
     const { error } = await supabase.from('meetings').insert([newMeeting]);
     if (error) {
       console.error('Error adding meeting:', error);
-      // Revert if error (optional implementation)
-      alert("Lỗi khi lưu cuộc họp vào server");
+      alert("Lỗi khi lưu cuộc họp vào server: " + error.message);
     }
   };
   const handleUpdateMeeting = async (updatedMeeting: Meeting) => {
-    setMeetings(prev => prev.map(m => m.id === updatedMeeting.id ? updatedMeeting : m));
     const { error } = await supabase.from('meetings').update(updatedMeeting).eq('id', updatedMeeting.id);
     if (error) console.error('Error updating meeting:', error);
   };
   const handleDeleteMeeting = async (id: string) => {
-    setMeetings(prev => prev.filter(m => m.id !== id));
     const { error } = await supabase.from('meetings').delete().eq('id', id);
     if (error) console.error('Error deleting meeting:', error);
   };
@@ -119,12 +148,10 @@ const App: React.FC = () => {
 
   // DOCUMENTS
   const handleAddDocument = async (newDoc: Document) => {
-    setDocuments(prev => [newDoc, ...prev]);
     const { error } = await supabase.from('documents').insert([newDoc]);
     if (error) console.error('Error adding document:', error);
   };
   const handleDeleteDocument = async (id: string) => {
-    setDocuments(prev => prev.filter(d => d.id !== id));
     const { error } = await supabase.from('documents').delete().eq('id', id);
     if (error) console.error('Error deleting document:', error);
   };
