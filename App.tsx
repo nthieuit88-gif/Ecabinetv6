@@ -17,7 +17,9 @@ const App: React.FC = () => {
   // --- AUTH STATE ---
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
-  const [activeTab, setActiveTab] = useState('dashboard');
+  // Initialize activeTab from localStorage to persist state after reload
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('ecabinet_activeTab') || 'dashboard');
+  
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
   const [tempMeeting, setTempMeeting] = useState<Meeting | null>(null);
@@ -28,6 +30,18 @@ const App: React.FC = () => {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+
+  // --- RESTORE SCROLL POSITION ---
+  useEffect(() => {
+    // Check if we need to restore scroll position (set by DocumentList before reload)
+    const savedScrollY = localStorage.getItem('ecabinet_scrollY');
+    if (savedScrollY) {
+      setTimeout(() => {
+        window.scrollTo(0, parseInt(savedScrollY, 10));
+        localStorage.removeItem('ecabinet_scrollY'); // Clear after restoring
+      }, 100); // Small delay to ensure content renders
+    }
+  }, []);
 
   // --- FETCH DATA FROM SUPABASE ---
   useEffect(() => {
@@ -104,6 +118,9 @@ const App: React.FC = () => {
 
   const handleNavigate = (tab: string, action: string | null = null) => {
     setActiveTab(tab);
+    // Save to localStorage so we can stay on this tab after reload
+    localStorage.setItem('ecabinet_activeTab', tab);
+    
     if (action) {
       setPendingAction(action);
     }
@@ -112,6 +129,7 @@ const App: React.FC = () => {
   const handleLogout = () => {
     setCurrentUser(null);
     setActiveTab('dashboard'); // Reset tab
+    localStorage.setItem('ecabinet_activeTab', 'dashboard');
   };
 
   // --- DATA HANDLERS (CRUD with Supabase) ---
@@ -216,6 +234,7 @@ const App: React.FC = () => {
     setActiveMeetingId(null);
     setTempMeeting(null);
     setActiveTab(returnTab);
+    localStorage.setItem('ecabinet_activeTab', returnTab);
   };
 
   const handleActionComplete = () => {

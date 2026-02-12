@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FileText, FileSpreadsheet, FileIcon, Download, Trash2, Search, UploadCloud, Filter, Loader2 } from 'lucide-react';
+import { FileText, FileSpreadsheet, FileIcon, Download, Trash2, Search, UploadCloud, Filter, Loader2, Edit } from 'lucide-react';
 import { getUserById } from '../data';
 import { Document, User } from '../types';
 import { supabase } from '../supabaseClient';
@@ -70,6 +70,42 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     fileInputRef.current?.click();
   };
 
+  // Helper to force reload and keep scroll position
+  const reloadPage = () => {
+    // Save current scroll position
+    localStorage.setItem('ecabinet_scrollY', window.scrollY.toString());
+    // Force reload
+    window.location.reload();
+  };
+
+  const handleEdit = async (doc: Document) => {
+    const newName = window.prompt("Nhập tên mới cho tài liệu:", doc.name);
+    
+    // User cancelled or entered empty string
+    if (newName === null || newName.trim() === "") return;
+    if (newName === doc.name) return; // No change
+
+    try {
+        // Update in Supabase Database
+        const { error } = await supabase
+            .from('documents')
+            .update({ name: newName })
+            .eq('id', doc.id);
+
+        if (error) {
+            throw error;
+        }
+
+        // Success Flow: Alert -> Reload
+        alert("Cập nhật tên tài liệu thành công!");
+        reloadPage();
+
+    } catch (error: any) {
+        console.error("Error updating document:", error);
+        alert(`Lỗi khi cập nhật: ${error.message}`);
+    }
+  };
+
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -136,13 +172,9 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     // 1. Delete from Storage if URL exists
     if (docUrl) {
       try {
-        // Extract file path from URL
-        // Example URL: https://.../storage/v1/object/public/documents/filename.ext
-        // We need 'filename.ext'
         const urlParts = docUrl.split('/documents/');
         if (urlParts.length > 1) {
            const filePath = decodeURIComponent(urlParts[1]);
-           console.log("Attempting to delete file from storage:", filePath);
            
            const { error: storageError } = await supabase.storage
              .from('documents')
@@ -150,7 +182,6 @@ export const DocumentList: React.FC<DocumentListProps> = ({
              
            if (storageError) {
              console.error('Error deleting file from storage:', storageError);
-             alert("Cảnh báo: Không thể xóa file gốc từ hệ thống lưu trữ (Storage). Vẫn sẽ tiến hành xóa dữ liệu.");
            }
         }
       } catch (e) {
@@ -158,8 +189,21 @@ export const DocumentList: React.FC<DocumentListProps> = ({
       }
     }
 
-    // 2. Delete Record from DB (via App prop)
-    onDeleteDocument(id);
+    // 2. Delete Record from DB
+    // Direct call to supabase here to ensure we wait for completion before reloading
+    const { error: dbError } = await supabase.from('documents').delete().eq('id', id);
+
+    if (dbError) {
+        alert("Lỗi khi xóa dữ liệu: " + dbError.message);
+    } else {
+        // 3. Success Feedback
+        alert("Xóa tài liệu thành công!");
+        reloadPage();
+    }
+    
+    // Note: We don't strictly need to call onDeleteDocument(id) prop if we reload, 
+    // but doing so updates local state in case reload fails or is slow.
+    onDeleteDocument(id); 
   };
 
   return (
@@ -276,15 +320,24 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                           </a>
                         )}
                         
-                        {/* Only Admin can delete */}
+                        {/* Only Admin can Edit/Delete */}
                         {isAdmin && (
-                          <button 
-                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg" 
-                            title="Xóa"
-                            onClick={() => handleDelete(doc.id, doc.url)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <>
+                            <button 
+                                className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" 
+                                title="Đổi tên"
+                                onClick={() => handleEdit(doc)}
+                            >
+                                <Edit className="w-4 h-4" />
+                            </button>
+                            <button 
+                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg" 
+                                title="Xóa"
+                                onClick={() => handleDelete(doc.id, doc.url)}
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                          </>
                         )}
                       </div>
                     </td>
