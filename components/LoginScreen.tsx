@@ -15,16 +15,20 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users }) => {
   // Unified State for Login Modal
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   
-  // Default password set to 'Longphu26##' for easier testing
-  const [password, setPassword] = useState('Longphu26##');
+  // Default password state
+  const [password, setPassword] = useState('');
   
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleUserClick = (user: User) => {
     setSelectedUser(user);
-    // Reset password to default test password when selecting a new user
-    setPassword('Longphu26##');
+    // Pre-fill password based on role for easier testing
+    if (user.role === 'admin') {
+         setPassword('Longphu25##');
+    } else {
+         setPassword('Longphu26##');
+    }
     setError('');
   };
 
