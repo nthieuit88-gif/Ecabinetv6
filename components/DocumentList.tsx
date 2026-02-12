@@ -10,6 +10,7 @@ interface DocumentListProps {
   onActionComplete?: () => void;
   documents: Document[];
   onAddDocument: (doc: Document) => void;
+  onUpdateDocument: (doc: Document) => void;
   onDeleteDocument: (id: string) => void;
 }
 
@@ -57,6 +58,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
   onActionComplete, 
   documents, 
   onAddDocument, 
+  onUpdateDocument,
   onDeleteDocument 
 }) => {
   const [isUploading, setIsUploading] = useState(false);
@@ -81,33 +83,15 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     fileInputRef.current?.click();
   };
 
-  // Helper to force reload and keep scroll position
-  const reloadPage = () => {
-    localStorage.setItem('ecabinet_scrollY', window.scrollY.toString());
-    window.location.reload();
-  };
-
   const handleEdit = async (doc: Document) => {
     const newName = window.prompt("Nhập tên mới cho tài liệu:", doc.name);
     
     if (newName === null || newName.trim() === "") return;
     if (newName === doc.name) return;
 
-    try {
-        const { error } = await supabase
-            .from('documents')
-            .update({ name: newName })
-            .eq('id', doc.id);
-
-        if (error) throw error;
-
-        alert("Cập nhật tên tài liệu thành công!");
-        reloadPage();
-
-    } catch (error: any) {
-        console.error("Error updating document:", error);
-        alert(`Lỗi khi cập nhật: ${error.message}`);
-    }
+    // Optimistic UI Update handled by onUpdateDocument
+    const updatedDoc = { ...doc, name: newName };
+    onUpdateDocument(updatedDoc);
   };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -120,9 +104,6 @@ export const DocumentList: React.FC<DocumentListProps> = ({
         // 1. Sanitize Filename to ensure valid URL
         const originalName = file.name;
         const cleanName = sanitizeFileName(originalName);
-        
-        // Generate unique path: timestamp_cleanName
-        // Example: "Báo Cáo.docx" -> "17098822_Bao_Cao.docx"
         const filePath = `${Date.now()}_${cleanName}`;
 
         // 2. Upload file to Supabase Storage
@@ -138,31 +119,28 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             throw new Error(uploadError.message);
         }
 
-        // 3. Get Public URL correctly using the returned path
-        // Note: uploadData.path is the key used in storage
+        // 3. Get Public URL
         const storagePath = uploadData?.path || filePath;
-        
         const { data: publicUrlData } = supabase.storage
             .from('documents')
             .getPublicUrl(storagePath);
 
         const publicUrl = publicUrlData.publicUrl;
 
-        // 4. Create Document Record in DB
+        // 4. Create Document Record
         const newDoc: Document = {
             id: Date.now().toString(),
-            name: originalName, // Keep original display name
+            name: originalName,
             type: getFileType(originalName),
             size: formatFileSize(file.size),
             updatedAt: new Date().toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }),
             ownerId: currentUser.id,
-            url: publicUrl // Save the valid URL
+            url: publicUrl
         };
 
-        // Call parent handler (Syncs to DB via App.tsx)
+        // Syncs to DB via App.tsx
         onAddDocument(newDoc);
         
-        // Reset input
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
@@ -183,14 +161,9 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     // 1. Delete from Storage if URL exists
     if (docUrl) {
       try {
-        // Parse URL to get file path
-        // URL format: .../storage/v1/object/public/documents/[filePath]
         const urlParts = docUrl.split('/documents/');
         if (urlParts.length > 1) {
-           // We must decodeURI to handle any encoded characters in the URL
            const filePath = decodeURIComponent(urlParts[1]);
-           console.log("Deleting storage file:", filePath);
-           
            const { error: storageError } = await supabase.storage
              .from('documents')
              .remove([filePath]);
@@ -203,17 +176,8 @@ export const DocumentList: React.FC<DocumentListProps> = ({
         console.error("Error parsing URL for storage deletion:", e);
       }
     }
-
-    // 2. Delete Record from DB
-    const { error: dbError } = await supabase.from('documents').delete().eq('id', id);
-
-    if (dbError) {
-        alert("Lỗi khi xóa dữ liệu: " + dbError.message);
-    } else {
-        alert("Xóa tài liệu thành công!");
-        reloadPage();
-    }
     
+    // Call parent to update state and DB
     onDeleteDocument(id); 
   };
 

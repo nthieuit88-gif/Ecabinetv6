@@ -209,6 +209,86 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     setDocxContent(null);
     setPdfDoc(null);
 
+    // --- DEMO MODE HANDLING ---
+    // Inject fake content for demo documents without URLs (d1, d2, d4, d5)
+    // d3 is PDF and has a real URL in data.ts, so it will fall through to standard loading.
+    if (['d1', 'd2', 'd4', 'd5'].includes(previewDoc.id)) {
+        await new Promise(r => setTimeout(r, 800)); // Simulate loading delay
+        
+        let demoContent = '';
+        if (previewDoc.type === 'doc' || previewDoc.type === 'docx') {
+           demoContent = `
+             <div class="prose prose-slate max-w-none">
+                <h1 style="color: #047857; margin-bottom: 0.5em;">${previewDoc.name}</h1>
+                <p class="text-sm text-gray-500 italic border-b pb-4">Tài liệu mẫu (Demo Content)</p>
+                
+                <h3>1. Tổng quan</h3>
+                <p>Đây là nội dung giả lập cho tài liệu Word/Docx trong chế độ Demo. Hệ thống đã nhận diện file nhưng không tìm thấy nguồn dữ liệu thực tế.</p>
+                
+                <h3>2. Nội dung chi tiết</h3>
+                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+                <ul>
+                  <li>Điểm thảo luận 1: Tối ưu hóa quy trình.</li>
+                  <li>Điểm thảo luận 2: Nâng cao hiệu suất hệ thống.</li>
+                  <li>Điểm thảo luận 3: Kế hoạch triển khai Q2/2024.</li>
+                </ul>
+                
+                <h3>3. Kết luận</h3>
+                <p>Thống nhất các phương án đã đề ra. Các bộ phận liên quan chịu trách nhiệm thực hiện đúng tiến độ.</p>
+             </div>
+           `;
+           setDocxContent(demoContent);
+           setIsLoadingPreview(false);
+           return;
+        } else if (previewDoc.type === 'xls' || previewDoc.type === 'xlsx') {
+            // Mock Excel View
+            setDocxContent(`
+               <div class="overflow-x-auto">
+                 <h2 class="text-xl font-bold text-emerald-700 mb-4">${previewDoc.name}</h2>
+                 <table class="w-full border-collapse border border-gray-300 text-sm">
+                    <thead>
+                      <tr class="bg-gray-100">
+                        <th class="border p-2">STT</th>
+                        <th class="border p-2">Hạng Mục</th>
+                        <th class="border p-2">Đơn Vị</th>
+                        <th class="border p-2">Số Lượng</th>
+                        <th class="border p-2">Ghi Chú</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                       <tr><td class="border p-2">1</td><td class="border p-2">Thiết bị A</td><td class="border p-2">Cái</td><td class="border p-2">10</td><td class="border p-2">Mới 100%</td></tr>
+                       <tr><td class="border p-2">2</td><td class="border p-2">Vật tư B</td><td class="border p-2">Hộp</td><td class="border p-2">50</td><td class="border p-2">Kho 2</td></tr>
+                       <tr><td class="border p-2">3</td><td class="border p-2">Chi phí C</td><td class="border p-2">VND</td><td class="border p-2">5.000.000</td><td class="border p-2">Dự kiến</td></tr>
+                       <tr><td class="border p-2">...</td><td class="border p-2">...</td><td class="border p-2">...</td><td class="border p-2">...</td><td class="border p-2">...</td></tr>
+                    </tbody>
+                 </table>
+                 <p class="text-xs text-gray-400 mt-4 italic">* Dữ liệu hiển thị dạng bảng tính demo.</p>
+               </div>
+            `);
+            setIsLoadingPreview(false);
+            return;
+        } else if (previewDoc.type === 'ppt' || previewDoc.type === 'pptx') {
+             // Mock PPT View
+             setDocxContent(`
+                <div class="flex flex-col items-center justify-center h-full bg-gray-100 p-8 rounded-xl border border-gray-200">
+                   <div class="w-full aspect-video bg-white shadow-lg flex flex-col items-center justify-center p-10 text-center">
+                      <h1 class="text-3xl font-bold text-orange-600 mb-4">${previewDoc.name}</h1>
+                      <h2 class="text-xl text-gray-600">Slide Trình Chiếu Demo</h2>
+                      <div class="mt-8 flex gap-2">
+                         <div class="w-3 h-3 rounded-full bg-orange-500"></div>
+                         <div class="w-3 h-3 rounded-full bg-gray-300"></div>
+                         <div class="w-3 h-3 rounded-full bg-gray-300"></div>
+                      </div>
+                   </div>
+                   <p class="mt-4 text-gray-500">Trình xem trước Slide đang được cập nhật...</p>
+                </div>
+             `);
+             setIsLoadingPreview(false);
+             return;
+        }
+    }
+    // ----------------------
+
     try {
       let arrayBuffer: ArrayBuffer | null = null;
       
@@ -389,13 +469,13 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
        );
     }
 
-    // Determine if we have real content to show (Either local file OR remote URL)
-    const hasContent = uploadedFiles[previewDoc.id] || previewDoc.url;
+    // Determine if we have real content to show (Either local file OR remote URL OR injected mock content)
+    const hasContent = uploadedFiles[previewDoc.id] || previewDoc.url || docxContent;
     const hasLoadedData = pdfDoc || docxContent;
 
-    if (hasContent && hasLoadedData) {
+    if (hasContent || hasLoadedData) {
       // PDF Handling with Custom Viewer
-      if (previewDoc.type === 'pdf') {
+      if (previewDoc.type === 'pdf' && pdfDoc) {
         return (
           <div className="flex flex-col h-full w-full bg-slate-900 rounded-none overflow-hidden relative shadow-2xl">
              <style>{`
@@ -510,8 +590,8 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         );
       }
 
-      // DOCX Handling
-      if (previewDoc.type === 'doc') {
+      // DOCX / HTML Handling
+      if (docxContent) {
         return (
           <div className="bg-white text-slate-900 w-full h-full shadow-none overflow-y-auto px-8 py-8">
              <div 
@@ -523,7 +603,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
       }
     }
 
-    // 2. Fallback if URL is missing
+    // 2. Fallback if URL is missing (Only for non-demo files that genuinely fail)
     return (
         <div className="bg-white text-slate-900 w-full h-full shadow-none px-8 py-8 overflow-y-auto">
           <div className="max-w-6xl mx-auto">
@@ -859,10 +939,6 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
          <div className="w-px h-10 bg-slate-600 mx-2"></div>
 
          <div className="flex items-center gap-3">
-            {/* Removed Share button */}
-            {/* Removed Users button */}
-            {/* Removed More button */}
-            
             <button 
               onClick={() => toggleSidebar('chat')}
               className={`p-3 rounded-xl hover:bg-slate-600 text-slate-200 transition-colors ${activeSidebar === 'chat' ? 'bg-emerald-600 text-white' : 'bg-slate-700/50'}`} 

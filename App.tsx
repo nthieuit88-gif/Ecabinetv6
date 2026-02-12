@@ -219,6 +219,17 @@ const App: React.FC = () => {
     const { error } = await supabase.from('documents').insert([newDoc]);
     if (error) console.error('Error adding document:', error);
   };
+  
+  // NEW: Update document handler
+  const handleUpdateDocument = async (updatedDoc: Document) => {
+    setDocuments(prev => prev.map(d => d.id === updatedDoc.id ? updatedDoc : d));
+    // Important: Supabase uses snake_case by default, but we use camelCase in TS.
+    // Ensure table columns are created with quotes "updatedAt" or map them here.
+    // Based on provided SQL, we are using quoted identifiers.
+    const { error } = await supabase.from('documents').update(updatedDoc).eq('id', updatedDoc.id);
+    if (error) console.error('Error updating document:', error);
+  };
+
   const handleDeleteDocument = async (id: string) => {
     setDocuments(prev => prev.filter(doc => doc.id !== id));
     const { error } = await supabase.from('documents').delete().eq('id', id);
@@ -343,6 +354,7 @@ const App: React.FC = () => {
             currentUser={currentUser}
             documents={documents}
             onAddDocument={handleAddDocument}
+            onUpdateDocument={handleUpdateDocument}
             onDeleteDocument={handleDeleteDocument}
             pendingAction={pendingAction} 
             onActionComplete={handleActionComplete} 

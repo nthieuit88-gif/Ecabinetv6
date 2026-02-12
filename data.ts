@@ -112,7 +112,16 @@ export const MEETINGS: Meeting[] = [
 export const DOCUMENTS: Document[] = [
   { id: 'd1', name: 'Bien_ban_cuoc_hop_tuan_4.docx', type: 'doc', size: '2.4 MB', updatedAt: '26/02/2024', ownerId: 'u1' },
   { id: 'd2', name: 'Bao_cao_tai_chinh_Q1.xlsx', type: 'xls', size: '5.1 MB', updatedAt: '25/02/2024', ownerId: 'u4' },
-  { id: 'd3', name: 'Tai_lieu_du_an_eCabinet.pdf', type: 'pdf', size: '12.8 MB', updatedAt: '24/02/2024', ownerId: 'u2' },
+  // Add a valid sample PDF URL for d3 to make the demo work smoothly
+  { 
+    id: 'd3', 
+    name: 'Tai_lieu_du_an_eCabinet.pdf', 
+    type: 'pdf', 
+    size: '12.8 MB', 
+    updatedAt: '24/02/2024', 
+    ownerId: 'u2',
+    url: 'https://raw.githubusercontent.com/mozilla/pdf.js/ba2edeae/web/compressed.tracemonkey-pldi-09.pdf'
+  },
   { id: 'd4', name: 'Slide_thuyet_trinh_T2.pptx', type: 'ppt', size: '8.5 MB', updatedAt: '24/02/2024', ownerId: 'u1' },
   { id: 'd5', name: 'Danh_sach_nhan_su_moi.xls', type: 'xls', size: '1.2 MB', updatedAt: '23/02/2024', ownerId: 'u3' },
 ];
