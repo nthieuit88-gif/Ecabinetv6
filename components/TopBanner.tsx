@@ -1,139 +1,74 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
+import { MonitorPlay, Layers, Activity } from 'lucide-react';
 
 export const TopBanner: React.FC = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    let width = canvas.width = canvas.offsetWidth;
-    let height = canvas.height = canvas.offsetHeight;
-
-    // Handle Resize
-    const handleResize = () => {
-      if (canvas) {
-        width = canvas.width = canvas.offsetWidth;
-        height = canvas.height = canvas.offsetHeight;
-      }
-    };
-    window.addEventListener('resize', handleResize);
-
-    // Fireworks Logic
-    const particles: Particle[] = [];
-    const colors = ['#ff0043', '#14fc56', '#1e90ff', '#ffeb3b', '#ffffff', '#ff00ff'];
-
-    class Particle {
-      x: number;
-      y: number;
-      vx: number;
-      vy: number;
-      alpha: number;
-      color: string;
-      size: number;
-
-      constructor(x: number, y: number, color: string) {
-        this.x = x;
-        this.y = y;
-        const angle = Math.random() * Math.PI * 2;
-        const speed = Math.random() * 3 + 1; // Speed of explosion
-        this.vx = Math.cos(angle) * speed;
-        this.vy = Math.sin(angle) * speed;
-        this.alpha = 1;
-        this.color = color;
-        this.size = Math.random() * 2 + 1;
-      }
-
-      update() {
-        this.x += this.vx;
-        this.y += this.vy;
-        this.vy += 0.05; // Gravity
-        this.alpha -= 0.015; // Fade out speed
-      }
-
-      draw(context: CanvasRenderingContext2D) {
-        context.save();
-        context.globalAlpha = this.alpha;
-        context.beginPath();
-        context.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-        context.fillStyle = this.color;
-        context.fill();
-        context.restore();
-      }
-    }
-
-    const createExplosion = (x: number, y: number) => {
-      const color = colors[Math.floor(Math.random() * colors.length)];
-      for (let i = 0; i < 40; i++) {
-        particles.push(new Particle(x, y, color));
-      }
-    };
-
-    // Auto launch fireworks
-    let timer = 0;
-    const loop = () => {
-      // Clear canvas with trail effect
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'; // Trail length
-      ctx.fillRect(0, 0, width, height);
-      ctx.globalCompositeOperation = 'lighter';
-
-      // Update particles
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.update();
-        p.draw(ctx);
-        if (p.alpha <= 0) {
-          particles.splice(i, 1);
-        }
-      }
-
-      // Launch random firework
-      timer++;
-      if (timer > 40) { // Frequency of fireworks
-        const x = Math.random() * width;
-        const y = Math.random() * (height / 2) + (height / 4);
-        createExplosion(x, y);
-        timer = 0;
-      }
-
-      requestAnimationFrame(loop);
-    };
-
-    const animationId = requestAnimationFrame(loop);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      cancelAnimationFrame(animationId);
-    };
-  }, []);
-
   return (
-    <div className="relative w-full h-40 overflow-hidden bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 shadow-md shrink-0">
-      {/* Canvas for Fireworks */}
-      <canvas 
-        ref={canvasRef} 
-        className="absolute inset-0 w-full h-full pointer-events-none"
-      />
+    <div className="relative w-full h-32 md:h-40 overflow-hidden bg-slate-900 shrink-0 shadow-lg z-20 group">
+      {/* 1. Dynamic Animated Background Layer */}
+      <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=2072&auto=format&fit=crop')] bg-cover bg-center opacity-20 group-hover:scale-105 transition-transform duration-[20s]"></div>
+      <div className="absolute inset-0 bg-gradient-to-r from-slate-900 via-emerald-900/80 to-slate-900 mix-blend-multiply"></div>
+      
+      {/* Animated Abstract Blobs */}
+      <div className="absolute top-[-50%] left-[-10%] w-96 h-96 bg-emerald-500/20 rounded-full blur-3xl animate-[pulse_8s_infinite]"></div>
+      <div className="absolute bottom-[-50%] right-[-10%] w-96 h-96 bg-blue-500/20 rounded-full blur-3xl animate-[pulse_10s_infinite_reverse]"></div>
 
-      {/* Content Overlay */}
-      <div className="absolute inset-0 flex flex-col items-center justify-center z-10 px-4 text-center">
-         {/* Animated Text Container */}
-         <div className="space-y-2">
-            <h1 className="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-200 to-cyan-400 animate-[pulse_4s_ease-in-out_infinite] drop-shadow-[0_0_10px_rgba(52,211,153,0.5)]">
-              HỆ THỐNG QUẢN LÝ PHÒNG HỌP KHÔNG GIẤY
-            </h1>
-            <p className="text-white/80 text-sm md:text-base font-medium tracking-widest uppercase animate-[pulse_5s_ease-in-out_infinite]">
-              eCabinet &bull; Hiện Đại &bull; Minh Bạch &bull; Hiệu Quả
-            </p>
+      {/* Grid Pattern Overlay */}
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:30px_30px]"></div>
+
+      {/* 2. Content Layer */}
+      <div className="absolute inset-0 flex items-center justify-between px-6 md:px-12 z-10">
+         
+         {/* Left Decor: Logo Area */}
+         <div className="hidden md:flex items-center gap-4 animate-in slide-in-from-left duration-700">
+            <div className="relative w-16 h-16 flex items-center justify-center">
+               <div className="absolute inset-0 bg-emerald-500/20 rounded-2xl animate-spin-slow blur-sm"></div>
+               <div className="relative bg-gradient-to-br from-emerald-400 to-cyan-600 w-14 h-14 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/40 border border-emerald-200/30">
+                  <MonitorPlay className="text-white w-8 h-8" />
+               </div>
+            </div>
+            <div>
+               <div className="h-1 w-12 bg-emerald-500 rounded-full mb-1"></div>
+               <div className="h-1 w-8 bg-emerald-500/50 rounded-full"></div>
+            </div>
+         </div>
+
+         {/* Center Text */}
+         <div className="flex-1 flex flex-col items-center justify-center text-center space-y-2">
+            <div className="relative">
+              <h1 className="text-2xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-teal-200 via-emerald-300 to-cyan-200 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)] tracking-tight uppercase">
+                Hệ Thống Phòng Họp Không Giấy
+              </h1>
+              <span className="absolute -top-4 -right-6 text-[10px] px-2 py-0.5 rounded bg-emerald-500 text-white font-bold hidden md:block shadow-lg shadow-emerald-500/50 animate-bounce">
+                v6.0 Live
+              </span>
+            </div>
+            
+            <div className="flex items-center gap-3 text-emerald-300 text-xs md:text-sm font-medium tracking-widest uppercase">
+               <span className="flex items-center gap-1"><Layers className="w-3 h-3" /> eCabinet</span>
+               <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
+               <span className="flex items-center gap-1"><Activity className="w-3 h-3" /> Real-time</span>
+               <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
+               <span>Secure</span>
+            </div>
+         </div>
+
+         {/* Right Decor: VN Flag stylized or Emblem */}
+         <div className="hidden md:block animate-in slide-in-from-right duration-700">
+            <div className="text-right">
+               <p className="text-[10px] text-emerald-400 font-mono mb-0.5">SYSTEM STATUS</p>
+               <div className="flex items-center gap-2 bg-black/30 backdrop-blur-md px-3 py-1.5 rounded-lg border border-emerald-500/30">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span className="text-xs font-bold text-emerald-100">ONLINE</span>
+               </div>
+            </div>
          </div>
       </div>
       
-      {/* Decorative Bottom Border */}
-      <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent opacity-50"></div>
+      {/* Bottom Glowing Line */}
+      <div className="absolute bottom-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_-2px_10px_rgba(16,185,129,0.5)]"></div>
     </div>
   );
 };

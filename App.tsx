@@ -280,6 +280,8 @@ const App: React.FC = () => {
             meeting={meeting} 
             onLeave={handleLeaveMeeting} 
             allDocuments={documents}
+            onAddDocument={handleAddDocument}
+            onUpdateMeeting={handleUpdateMeeting}
           />
         );
       default:

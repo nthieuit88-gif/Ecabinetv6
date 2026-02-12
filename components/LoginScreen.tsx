@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { Shield, User as UserIcon, LogIn, MonitorPlay, Lock, X } from 'lucide-react';
+import { Shield, User as UserIcon, LogIn, MonitorPlay, Lock, X, CheckCircle2 } from 'lucide-react';
 
 interface LoginScreenProps {
   users: User[];
@@ -39,95 +39,143 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onSelectUser })
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 font-sans relative">
-      <div className="max-w-5xl w-full">
+    <div className="min-h-screen relative flex flex-col items-center justify-center p-6 font-sans overflow-hidden">
+      
+      {/* Background - Matches TopBanner Theme */}
+      <div className="absolute inset-0 bg-slate-900 z-0">
+          <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=2072&auto=format&fit=crop')] bg-cover bg-center opacity-10"></div>
+          <div className="absolute inset-0 bg-gradient-to-br from-slate-900/90 via-emerald-900/40 to-slate-900/90"></div>
+          {/* Animated Background Elements */}
+          <div className="absolute top-0 left-0 w-full h-full overflow-hidden">
+             <div className="absolute -top-20 -left-20 w-96 h-96 bg-emerald-500/10 rounded-full blur-[100px] animate-pulse"></div>
+             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-blue-600/5 rounded-full blur-[120px]"></div>
+             <div className="absolute -bottom-20 -right-20 w-96 h-96 bg-emerald-500/10 rounded-full blur-[100px] animate-pulse"></div>
+          </div>
+      </div>
+
+      <div className="max-w-6xl w-full z-10 relative">
         
         {/* Header */}
-        <div className="text-center mb-12">
-          <div className="inline-flex items-center justify-center w-24 h-24 bg-gradient-to-tr from-emerald-400 to-cyan-600 rounded-[2rem] shadow-2xl shadow-emerald-400/40 mb-8 animate-[pulse_4s_ease-in-out_infinite] ring-4 ring-white/50">
-             <MonitorPlay className="text-white w-12 h-12 drop-shadow-md" />
+        <div className="text-center mb-10 flex flex-col items-center animate-in fade-in slide-in-from-top-10 duration-700">
+          <div className="relative group cursor-default">
+             <div className="absolute -inset-1 bg-gradient-to-r from-emerald-600 to-cyan-600 rounded-[2.5rem] blur opacity-75 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 animate-tilt"></div>
+             <div className="relative inline-flex items-center justify-center w-28 h-28 bg-slate-900 rounded-[2rem] border border-emerald-500/30 shadow-2xl">
+                 <MonitorPlay className="text-emerald-400 w-14 h-14 drop-shadow-[0_0_15px_rgba(52,211,153,0.5)]" />
+             </div>
           </div>
-          <h1 className="text-4xl font-bold text-slate-800 mb-2">eCabinet - Phòng Họp Không Giấy</h1>
-          <p className="text-slate-500 text-lg">Vui lòng chọn tài khoản để đăng nhập hệ thống</p>
+          
+          <h1 className="mt-8 text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-teal-300 via-emerald-300 to-cyan-300 drop-shadow-sm uppercase tracking-tight">
+            Phòng Họp Không Giấy
+          </h1>
+          <p className="mt-4 text-slate-400 text-lg font-light tracking-wider uppercase border-t border-slate-700 pt-4 px-8">
+            Hệ thống quản lý eCabinet <span className="text-emerald-500 font-bold">v6.0</span>
+          </p>
         </div>
 
-        {/* Admin Section */}
-        <div className="mb-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-           <div className="flex items-center gap-3 mb-4 px-2">
-              <Shield className="w-5 h-5 text-purple-600" />
-              <h2 className="text-lg font-bold text-slate-700 uppercase tracking-wider">Quản Trị Viên</h2>
-           </div>
-           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {admins.map(user => (
-                <button
-                  key={user.id}
-                  onClick={() => handleUserClick(user)}
-                  className="bg-white p-4 rounded-xl border border-purple-100 shadow-sm hover:shadow-md hover:border-purple-300 transition-all text-left flex items-center gap-4 group"
-                >
-                  <div className="w-12 h-12 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center font-bold text-xl group-hover:bg-purple-600 group-hover:text-white transition-colors">
-                    {user.name.charAt(0)}
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-800 group-hover:text-purple-700">{user.name}</h3>
-                    <p className="text-xs text-slate-500">{user.email}</p>
-                    <span className="inline-block mt-1 text-[10px] font-semibold bg-purple-50 text-purple-700 px-2 py-0.5 rounded border border-purple-100">
-                      {user.department}
-                    </span>
-                  </div>
-                  <LogIn className="w-5 h-5 text-gray-300 ml-auto group-hover:text-purple-500" />
-                </button>
-              ))}
-           </div>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+            
+            {/* Admin Column */}
+            <div className="lg:col-span-4 animate-in fade-in slide-in-from-left-8 duration-700 delay-100">
+               <div className="bg-slate-800/50 backdrop-blur-xl border border-purple-500/20 rounded-2xl p-6 shadow-2xl shadow-purple-900/20">
+                   <div className="flex items-center gap-3 mb-6 pb-4 border-b border-purple-500/20">
+                      <div className="p-2 bg-purple-500/10 rounded-lg">
+                        <Shield className="w-6 h-6 text-purple-400" />
+                      </div>
+                      <h2 className="text-lg font-bold text-slate-100 uppercase tracking-wider">Quản Trị Viên</h2>
+                   </div>
+                   
+                   <div className="space-y-3">
+                      {admins.map(user => (
+                        <button
+                          key={user.id}
+                          onClick={() => handleUserClick(user)}
+                          className="w-full bg-slate-900/50 hover:bg-purple-900/20 p-4 rounded-xl border border-slate-700 hover:border-purple-500/50 transition-all text-left flex items-center gap-4 group"
+                        >
+                          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 text-white flex items-center justify-center font-bold text-xl shadow-lg group-hover:scale-110 transition-transform">
+                            {user.name.charAt(0)}
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-slate-200 group-hover:text-purple-300 transition-colors">{user.name}</h3>
+                            <span className="inline-block mt-1 text-[10px] font-bold bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded border border-purple-500/30">
+                              IT System
+                            </span>
+                          </div>
+                          <Lock className="w-4 h-4 text-slate-500 ml-auto group-hover:text-purple-400" />
+                        </button>
+                      ))}
+                   </div>
+               </div>
+            </div>
+
+            {/* User Column */}
+            <div className="lg:col-span-8 animate-in fade-in slide-in-from-right-8 duration-700 delay-200">
+               <div className="bg-slate-800/50 backdrop-blur-xl border border-emerald-500/20 rounded-2xl p-6 shadow-2xl shadow-emerald-900/20 h-full">
+                   <div className="flex items-center gap-3 mb-6 pb-4 border-b border-emerald-500/20">
+                      <div className="p-2 bg-emerald-500/10 rounded-lg">
+                        <UserIcon className="w-6 h-6 text-emerald-400" />
+                      </div>
+                      <h2 className="text-lg font-bold text-slate-100 uppercase tracking-wider">Cán Bộ / Nhân Viên</h2>
+                   </div>
+                   
+                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                      <style>{`
+                        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+                        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
+                        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(16,185,129,0.3); border-radius: 2px; }
+                      `}</style>
+                      {regularUsers.map(user => (
+                        <button
+                          key={user.id}
+                          onClick={() => handleUserClick(user)}
+                          className="bg-slate-900/50 hover:bg-emerald-900/20 p-3 rounded-xl border border-slate-700 hover:border-emerald-500/50 transition-all text-left flex items-center gap-3 group"
+                        >
+                          <div className="w-10 h-10 rounded-full bg-slate-700 text-slate-300 flex items-center justify-center font-bold text-sm group-hover:bg-emerald-600 group-hover:text-white transition-colors border border-slate-600">
+                            {user.name.charAt(0)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <h3 className="font-bold text-slate-300 text-sm truncate group-hover:text-emerald-300 transition-colors">{user.name}</h3>
+                            <p className="text-[10px] text-slate-500 truncate mt-0.5">{user.department}</p>
+                          </div>
+                          <LogIn className="w-3 h-3 text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity -ml-2" />
+                        </button>
+                      ))}
+                   </div>
+               </div>
+            </div>
         </div>
 
-        {/* User Section */}
-        <div className="animate-in fade-in slide-in-from-bottom-8 duration-700">
-           <div className="flex items-center gap-3 mb-4 px-2">
-              <UserIcon className="w-5 h-5 text-emerald-600" />
-              <h2 className="text-lg font-bold text-slate-700 uppercase tracking-wider">Cán Bộ / Nhân Viên</h2>
-           </div>
-           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {regularUsers.map(user => (
-                <button
-                  key={user.id}
-                  onClick={() => handleUserClick(user)}
-                  className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-emerald-300 transition-all text-left flex items-center gap-3 group"
-                >
-                  <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center font-bold text-lg group-hover:bg-emerald-500 group-hover:text-white transition-colors">
-                    {user.name.charAt(0)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <h3 className="font-bold text-slate-800 text-sm truncate group-hover:text-emerald-700">{user.name}</h3>
-                    <p className="text-[10px] text-slate-400 truncate">{user.department}</p>
-                  </div>
-                </button>
-              ))}
-           </div>
+        {/* Footer Credit in Login Screen */}
+        <div className="mt-12 text-center">
+            <p className="text-xs text-slate-600 font-medium">
+               © 2024 N.TRUNG.HIẾU_CS | Bảo mật & Tin cậy
+            </p>
         </div>
       </div>
 
       {/* Admin Login Modal */}
       {selectedAdmin && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 relative animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
+            <div className="bg-slate-900 border border-purple-500/30 rounded-2xl shadow-2xl w-full max-w-md p-8 relative animate-in zoom-in-95 duration-300">
                 <button 
                   onClick={() => setSelectedAdmin(null)}
-                  className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 p-1 hover:bg-gray-100 rounded-full transition-colors"
+                  className="absolute top-4 right-4 text-slate-500 hover:text-white p-1 hover:bg-slate-800 rounded-full transition-colors"
                 >
                   <X className="w-6 h-6" />
                 </button>
                 
-                <div className="flex flex-col items-center mb-6">
-                    <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mb-4 border-4 border-purple-50">
-                        <Lock className="w-8 h-8 text-purple-600" />
+                <div className="flex flex-col items-center mb-8">
+                    <div className="w-20 h-20 bg-purple-500/10 rounded-full flex items-center justify-center mb-4 border border-purple-500/30 ring-4 ring-purple-900/20">
+                        <Lock className="w-10 h-10 text-purple-400" />
                     </div>
-                    <h3 className="text-2xl font-bold text-gray-800">Xác thực Admin</h3>
-                    <p className="text-sm text-gray-500 mt-1">Xin chào <b>{selectedAdmin.name}</b></p>
-                    <p className="text-xs text-gray-400">Vui lòng nhập mật khẩu để tiếp tục</p>
+                    <h3 className="text-2xl font-bold text-white">Xác thực Admin</h3>
+                    <div className="flex items-center gap-2 mt-2 px-3 py-1 bg-slate-800 rounded-full border border-slate-700">
+                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                        <p className="text-sm text-slate-300">{selectedAdmin.name}</p>
+                    </div>
                 </div>
 
-                <form onSubmit={handleAdminLogin} className="space-y-4">
-                    <div>
+                <form onSubmit={handleAdminLogin} className="space-y-6">
+                    <div className="relative">
                         <input 
                             type="password" 
                             autoFocus
@@ -136,20 +184,23 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onSelectUser })
                                 setPassword(e.target.value);
                                 setError('');
                             }}
-                            className={`w-full px-4 py-3 rounded-xl border ${error ? 'border-red-300 focus:ring-red-200' : 'border-gray-200 focus:ring-purple-200'} focus:border-purple-500 focus:ring-4 outline-none transition-all text-center tracking-widest text-lg`}
-                            placeholder="Nhập mật khẩu..."
+                            className={`w-full px-4 py-4 rounded-xl bg-slate-800 border ${error ? 'border-red-500/50 focus:ring-red-500/20' : 'border-slate-700 focus:ring-purple-500/30'} focus:border-purple-500 focus:ring-4 outline-none transition-all text-center tracking-[0.5em] text-xl text-white placeholder:text-slate-600 placeholder:tracking-normal`}
+                            placeholder="NHẬP MẬT KHẨU"
                         />
-                        {error && (
-                            <p className="text-red-500 text-sm mt-2 text-center flex items-center justify-center gap-1 animate-in slide-in-from-top-1">
-                                <Shield className="w-3 h-3" /> {error}
-                            </p>
-                        )}
                     </div>
+                    
+                    {error && (
+                         <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-center justify-center gap-2 text-red-400 text-sm animate-in slide-in-from-top-2">
+                             <Shield className="w-4 h-4" /> {error}
+                         </div>
+                    )}
+
                     <button 
                         type="submit"
-                        className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-purple-200 active:scale-[0.98]"
+                        className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-purple-900/40 active:scale-[0.98] flex items-center justify-center gap-2 group"
                     >
-                        Đăng Nhập Hệ Thống
+                        <CheckCircle2 className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                        ĐĂNG NHẬP HỆ THỐNG
                     </button>
                 </form>
             </div>

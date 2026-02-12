@@ -18,9 +18,11 @@ interface LiveMeetingProps {
   meeting: Meeting;
   onLeave: () => void;
   allDocuments: Document[];
+  onAddDocument: (doc: Document) => void;
+  onUpdateMeeting: (meeting: Meeting) => void;
 }
 
-export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, onLeave, allDocuments }) => {
+export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, onLeave, allDocuments, onAddDocument, onUpdateMeeting }) => {
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCamOn, setIsCamOn] = useState(true);
   
@@ -100,9 +102,17 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     }
   };
 
-  const handleAddDocument = (docId: string) => {
+  const handleAddExistingDocument = (docId: string) => {
     if (!attachedDocIds.includes(docId)) {
-        setAttachedDocIds(prev => [...prev, docId]);
+        const updatedIds = [...attachedDocIds, docId];
+        setAttachedDocIds(updatedIds);
+        
+        // Sync with Supabase: Update Meeting
+        const updatedMeeting: Meeting = {
+            ...meeting,
+            documentIds: updatedIds
+        };
+        onUpdateMeeting(updatedMeeting);
     }
     setIsAddingDoc(false);
   };
@@ -111,103 +121,15 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     fileInputRef.current?.click();
   };
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-
-    if (files.length > 5) {
-        alert("Vui lòng chỉ chọn tối đa 5 file cùng lúc.");
-        // Reset input to allow re-selection
-        if (fileInputRef.current) fileInputRef.current.value = '';
-        return;
-    }
-
-    const getFileType = (fileName: string): Document['type'] => {
-      const ext = fileName.split('.').pop()?.toLowerCase();
-      if (ext === 'pdf') return 'pdf';
-      if (['doc', 'docx'].includes(ext || '')) return 'doc';
-      if (['xls', 'xlsx', 'csv'].includes(ext || '')) return 'xls';
-      if (['ppt', 'pptx'].includes(ext || '')) return 'ppt';
-      return 'other';
-    };
-
-    // Simulate upload delay
-    setTimeout(() => {
-        const newDocs: Document[] = [];
-        const newFilesMap: Record<string, File> = {};
-        const newDocIds: string[] = [];
-
-        (Array.from(files) as File[]).forEach((file, index) => {
-            // Add index to timestamp to ensure unique IDs for batch upload
-            const newDocId = `doc-new-${Date.now()}-${index}`;
-            
-            const newDoc: Document = {
-                id: newDocId,
-                name: file.name,
-                type: getFileType(file.name),
-                size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
-                updatedAt: new Date().toLocaleDateString('vi-VN'),
-                ownerId: currentUser.id
-            };
-
-            newDocs.push(newDoc);
-            newFilesMap[newDocId] = file;
-            newDocIds.push(newDocId);
-        });
-
-        // Add to global store is handled via local state update here, 
-        // NOTE: In a real app we'd also push to global store, but here we just preview.
-        // If we want them to persist in 'documents' list after meeting, we should lift this state too,
-        // but for now let's assume ad-hoc uploads in meeting are local unless we add a prop handler.
-        // To keep it simple and safe based on current scope, we just add to local view.
-        
-        // Store actual file for previewing
-        setUploadedFiles(prev => ({ ...prev, ...newFilesMap }));
-
-        // Add to current meeting
-        setAttachedDocIds(prev => [...prev, ...newDocIds]);
-        setIsAddingDoc(false);
-        
-        // Reset input
-        if (fileInputRef.current) fileInputRef.current.value = '';
-    }, 500);
-  };
-
-  const getAttachedDocs = () => {
-    // Merge global documents (from props) with any ad-hoc local ones we created
-    // But wait, our local ones aren't in `allDocuments`. 
-    // We should search `allDocuments` first.
-    
-    return attachedDocIds.map(id => {
-        // Try finding in global store
-        const globalDoc = allDocuments.find(d => d.id === id);
-        if (globalDoc) return globalDoc;
-
-        // Try finding if we just uploaded it locally (we don't persist ad-hoc uploads to global list in this simplified version)
-        // In a real app, `handleFileChange` would call an `onAddDocument` prop.
-        // For now, we construct a temp doc object if we have the file but no doc record? 
-        // Actually in handleFileChange we didn't add to `allDocuments`.
-        // Let's rely on the fact that if we just uploaded it, we created a doc object there.
-        // We need to store those temp doc objects.
-        return null; 
-    }).filter(Boolean) as Document[];
-  };
-
-  // We need a way to include the locally created docs in the list if we don't push them to global.
-  // The previous implementation pushed to `DOCUMENTS` constant array.
-  // Since we switched to state, we should probably stick to `allDocuments` for existing ones.
-  // However, `handleFileChange` above creates `newDocs` array. We should probably add those to a local state `localDocs`.
-  const [localDocs, setLocalDocs] = useState<Document[]>([]);
-
-  // Update getAttachedDocs to look in both
   const getAttachedDocsResolved = () => {
+      // Look up docs from the global list based on attached IDs
       return attachedDocIds.map(id => {
-          return allDocuments.find(d => d.id === id) || localDocs.find(d => d.id === id);
+          return allDocuments.find(d => d.id === id);
       }).filter(Boolean) as Document[];
   };
 
-  // Update handleFileChange to update localDocs
-  const handleFileChangeWithLocalState = (event: React.ChangeEvent<HTMLInputElement>) => {
+  // Update handleFileChange to Persist Data
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
       const files = event.target.files;
       if (!files || files.length === 0) return;
 
@@ -232,7 +154,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
           const newDocIds: string[] = [];
 
           (Array.from(files) as File[]).forEach((file, index) => {
-              const newDocId = `doc-new-${Date.now()}-${index}`;
+              const newDocId = `doc-live-${Date.now()}-${index}`;
               const newDoc: Document = {
                   id: newDocId,
                   name: file.name,
@@ -241,14 +163,28 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                   updatedAt: new Date().toLocaleDateString('vi-VN'),
                   ownerId: currentUser.id
               };
+              
               newDocs.push(newDoc);
               newFilesMap[newDocId] = file;
               newDocIds.push(newDocId);
           });
 
-          setLocalDocs(prev => [...prev, ...newDocs]);
+          // 1. Save new documents to Supabase (via App prop)
+          newDocs.forEach(doc => onAddDocument(doc));
+
+          // 2. Update local file map for previewing immediately
           setUploadedFiles(prev => ({ ...prev, ...newFilesMap }));
-          setAttachedDocIds(prev => [...prev, ...newDocIds]);
+          
+          // 3. Update local state and Sync Meeting to Supabase
+          const updatedDocIds = [...attachedDocIds, ...newDocIds];
+          setAttachedDocIds(updatedDocIds);
+          
+          const updatedMeeting: Meeting = {
+            ...meeting,
+            documentIds: updatedDocIds
+          };
+          onUpdateMeeting(updatedMeeting);
+
           setIsAddingDoc(false);
           
           if (fileInputRef.current) fileInputRef.current.value = '';
@@ -274,9 +210,21 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   // Load DOCX or PDF content
   useEffect(() => {
     const loadContent = async () => {
-      if (!previewDoc || !uploadedFiles[previewDoc.id]) return;
+      // Logic: First try to find in uploadedFiles (local session uploads)
+      // If not found, check if it's a "fake" file (no binary content available in this mock version).
+      // In a real app, we would fetch from URL.
+      
+      if (!previewDoc) return;
       
       const file = uploadedFiles[previewDoc.id];
+      
+      if (!file) {
+        // If file is not in local memory, we can't preview it fully in this mock setup unless we fetch it.
+        // But the previous mock setup showed "Fake Mode" for documents without file objects.
+        // We just let it fall through to "Fake Mode" render.
+        return;
+      }
+
       setIsLoadingPreview(true);
 
       try {
@@ -591,7 +539,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         className="hidden" 
         accept=".pdf,.doc,.docx"
         multiple
-        onChange={handleFileChangeWithLocalState} 
+        onChange={handleFileChange} 
       />
 
       {/* Header */}
@@ -721,7 +669,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                              {availableDocsToAdd.map(doc => (
                                <button 
                                  key={doc.id}
-                                 onClick={() => handleAddDocument(doc.id)}
+                                 onClick={() => handleAddExistingDocument(doc.id)}
                                  className="w-full text-left px-2 py-1.5 text-sm hover:bg-slate-600 rounded flex items-center gap-2 truncate group"
                                >
                                  <Plus className="w-3 h-3 text-slate-500 group-hover:text-emerald-400" />
