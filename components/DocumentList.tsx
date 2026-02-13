@@ -105,8 +105,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
         const cleanName = sanitizeFileName(originalName);
         const filePath = `${Date.now()}_${cleanName}`;
         let publicUrl = '';
-        let uploadSuccess = false;
-
+        
         // 1. Attempt Upload to Supabase Storage
         const { data: uploadData, error: uploadError } = await supabase.storage
             .from('documents')
@@ -116,14 +115,11 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             });
 
         if (uploadError) {
-            console.warn('Supabase Storage upload failed (likely permission/bucket issue). Switching to Local Demo Mode.', uploadError);
-            
+            console.warn('Supabase Storage upload failed. Using Local Fallback.', uploadError.message);
             // --- FALLBACK STRATEGY ---
-            // Create a temporary local URL so the app still works for Demo purposes
-            // This bypasses the SQL Permission error "42501"
+            // If storage fails (permission denied), create a local blob URL so the app still works!
             publicUrl = URL.createObjectURL(file);
         } else {
-            uploadSuccess = true;
             // 2. Get Public URL if upload succeeded
             const storagePath = uploadData?.path || filePath;
             const { data: publicUrlData } = supabase.storage
