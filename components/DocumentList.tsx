@@ -64,6 +64,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isAdmin = currentUser.role === 'admin';
+  const [uploadWarning, setUploadWarning] = useState<string | null>(null);
 
   useEffect(() => {
     // Only allow auto-open if admin
@@ -80,6 +81,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
   }, [pendingAction, onActionComplete, isAdmin]);
 
   const handleUploadClick = () => {
+    setUploadWarning(null);
     fileInputRef.current?.click();
   };
 
@@ -99,6 +101,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     if (!file) return;
 
     setIsUploading(true);
+    setUploadWarning(null);
 
     try {
         const originalName = file.name;
@@ -116,8 +119,9 @@ export const DocumentList: React.FC<DocumentListProps> = ({
 
         if (uploadError) {
             console.warn('Supabase Storage upload failed. Using Local Fallback.', uploadError.message);
+            setUploadWarning(`Cảnh báo: Không thể lưu file lên server (Lỗi: ${uploadError.message}). File sẽ chỉ xem được trong phiên làm việc này.`);
             // --- FALLBACK STRATEGY ---
-            // If storage fails (permission denied), create a local blob URL so the app still works!
+            // If storage fails (permission denied), create a local blob URL so the app still works temporarily!
             publicUrl = URL.createObjectURL(file);
         } else {
             // 2. Get Public URL if upload succeeded
@@ -225,6 +229,14 @@ export const DocumentList: React.FC<DocumentListProps> = ({
         )}
       </div>
 
+      {uploadWarning && (
+          <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg flex items-start gap-3 text-sm animate-in slide-in-from-top-2">
+             <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+             <div>{uploadWarning}</div>
+             <button onClick={() => setUploadWarning(null)} className="ml-auto text-yellow-600 hover:text-yellow-800 font-bold">✕</button>
+          </div>
+      )}
+
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col">
         {/* Toolbar */}
         <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row gap-4 justify-between items-center">
@@ -256,6 +268,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             <tbody className="divide-y divide-gray-100">
               {documents.map((doc) => {
                 const owner = getUserById(doc.ownerId);
+                const isLocal = doc.url && doc.url.startsWith('blob:');
                 return (
                   <tr key={doc.id} className="hover:bg-gray-50 transition-colors group">
                     <td className="px-6 py-4">
@@ -264,14 +277,17 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                           {getFileIcon(doc.type)}
                         </div>
                         <div>
-                          <a 
-                             href={doc.url} 
-                             target="_blank" 
-                             rel="noopener noreferrer"
-                             className="font-medium text-gray-800 text-sm hover:text-emerald-600 cursor-pointer block"
-                          >
-                             {doc.name}
-                          </a>
+                          <div className="flex items-center gap-2">
+                              <a 
+                                href={doc.url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className={`font-medium text-sm cursor-pointer block ${isLocal ? 'text-orange-600' : 'text-gray-800 hover:text-emerald-600'}`}
+                              >
+                                {doc.name}
+                              </a>
+                              {isLocal && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded border border-orange-200 font-bold" title="File này chưa được lưu lên Server">Local Only</span>}
+                          </div>
                           <p className="text-xs text-gray-400 uppercase mt-0.5">{doc.type}</p>
                         </div>
                       </div>

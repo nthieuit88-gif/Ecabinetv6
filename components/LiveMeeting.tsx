@@ -39,7 +39,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [pdfPageNum, setPdfPageNum] = useState(1);
   const [pdfTotalPages, setPdfTotalPages] = useState(0);
-  const [pdfScale, setPdfScale] = useState(1.2); // Increased default scale for better quality
+  const [pdfScale, setPdfScale] = useState(1.2); 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -153,7 +153,8 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     setPdfDoc(null);
     setUseGoogleViewer(false);
 
-    // 1. Check for Office Files with Remote URL (Use Google Viewer for 100% fidelity)
+    // 1. Prioritize Office Files with Remote URL -> Google Viewer
+    // This ensures accurate rendering for complex docs
     const isOffice = ['doc', 'xls', 'ppt'].includes(previewDoc.type);
     const hasRemoteUrl = previewDoc.url && !previewDoc.url.startsWith('blob:');
     
@@ -163,42 +164,70 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         return;
     }
 
-    // 2. Demo fallback for hardcoded IDs (Mock Content)
+    // 2. Demo fallback for HARDCODED demo IDs only (Mock Content)
     if (['d1', 'd2', 'd4', 'd5'].includes(previewDoc.id) && !previewDoc.url) {
-        // ... (Keep existing mock logic for pure demo items) ...
         await new Promise(r => setTimeout(r, 600)); 
         generateMockContent(previewDoc);
         setIsLoadingPreview(false);
         return;
     }
 
-    // 3. Handle PDF or Local Office Files
+    // 3. Handle PDF or Local/Blob Files
     try {
       let arrayBuffer: ArrayBuffer | null = null;
       
+      // A. Check for local file object (freshly uploaded in this session)
       const localFile = uploadedFiles[previewDoc.id];
+      
       if (localFile) {
           arrayBuffer = await localFile.arrayBuffer();
       } else if (previewDoc.url) {
+          // B. Check if it's a BLOB URL (Local from previous upload)
+          // If we are here, it means 'localFile' is missing (reload happened), but 'previewDoc.url' is 'blob:...'
+          // This is the "Broken Link" scenario.
+          if (previewDoc.url.startsWith('blob:')) {
+              setLoadError("Link tài liệu đã hết hạn sau khi tải lại trang (Do file chỉ được lưu tạm thời). Vui lòng xóa và tải lên lại.");
+              setIsLoadingPreview(false);
+              return;
+          }
+
+          // C. Try fetching Remote URL
           try {
             const response = await fetch(previewDoc.url);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             arrayBuffer = await response.arrayBuffer();
           } catch (fetchErr) {
-             console.warn("Fetch failed, falling back to mock:", fetchErr);
-             generateMockContent(previewDoc);
+             console.warn("Fetch failed, attempting Google Viewer fallback:", fetchErr);
+             
+             // If direct fetch fails (CORS?), try Google Viewer for PDF as well
+             if (previewDoc.type === 'pdf' || isOffice) {
+                 setUseGoogleViewer(true);
+                 setIsLoadingPreview(false);
+                 return;
+             }
+             
+             // If everything fails, show error, NOT mock content (user requested accuracy)
+             setLoadError("Không thể tải file từ máy chủ và không có bản xem trước.");
              setIsLoadingPreview(false);
              return;
           }
+      } else {
+         // No URL and No Local File
+         setLoadError("Tài liệu này không có dữ liệu (Missing URL).");
+         setIsLoadingPreview(false);
+         return;
       }
 
+      // D. Process ArrayBuffer (Local or Fetched)
       if (arrayBuffer) {
           if (previewDoc.type === 'doc') {
-            // Local DOCX fallback (Mammoth)
             try {
                 const result = await mammoth.convertToHtml({ arrayBuffer });
                 setDocxContent(result.value);
-            } catch (e) { console.warn("Mammoth failed", e); setLoadError("Không thể đọc file Word này."); }
+            } catch (e) { 
+                console.warn("Mammoth failed", e); 
+                setLoadError("Lỗi đọc nội dung file Word."); 
+            }
           } else if (previewDoc.type === 'pdf') {
              try {
                 const loadingTask = pdfjs.getDocument({ 
@@ -211,69 +240,42 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                 setPdfTotalPages(pdf.numPages);
                 setPdfPageNum(1);
                 await pdf.getPage(1);
-             } catch (e) { console.warn("PDF load failed", e); setLoadError("Không thể đọc file PDF này."); }
+             } catch (e) { 
+                 console.warn("PDF load failed", e); 
+                 // If PDF.js fails on the buffer, try Google Viewer as last resort if URL exists
+                 if (previewDoc.url && !previewDoc.url.startsWith('blob:')) {
+                     setUseGoogleViewer(true);
+                 } else {
+                     setLoadError("File PDF bị lỗi hoặc không đúng định dạng.");
+                 }
+            }
           } else {
-             // Local XLS/PPT
-             setLoadError("Chế độ xem trước file Excel/PPT cục bộ chưa được hỗ trợ. Vui lòng đợi upload hoàn tất để xem bản đầy đủ.");
+             // Local XLS/PPT - Mammoth doesn't support, and Google Viewer needs URL
+             // If we have a blob URL (local file), we can't send it to Google.
+             setLoadError("Định dạng Excel/PowerPoint chỉ hỗ trợ xem trước sau khi Upload thành công lên Server (hoặc dùng Google Viewer).");
           }
-      } else {
-          // No buffer, no URL -> Mock
-          generateMockContent(previewDoc);
       }
     } catch (error) {
        console.warn("General load failure", error);
-       generateMockContent(previewDoc);
+       setLoadError("Đã xảy ra lỗi không xác định khi tải tài liệu.");
     } finally {
        setIsLoadingPreview(false);
     }
   };
 
-  // Helper to generate mock content (reused from previous version)
   const generateMockContent = (doc: Document) => {
-    let mockHtml = '';
-    const docName = doc.name || 'Tài liệu';
-
-    if (['doc', 'pdf'].includes(doc.type)) {
-       mockHtml = `
-           <div class="prose prose-slate max-w-none bg-white p-12 min-h-[800px] shadow-sm mx-auto">
-              <div class="border-b-2 border-slate-100 pb-6 mb-8 flex justify-between items-end">
-                  <div>
-                      <h1 class="text-3xl font-bold text-slate-800 mb-2">${docName}</h1>
-                      <p class="text-sm text-slate-400 font-mono uppercase tracking-widest">CONFIDENTIAL • INTERNAL USE ONLY</p>
-                  </div>
-              </div>
-              <div class="space-y-6 text-justify text-slate-700 leading-relaxed">
-                  <p class="font-bold text-lg text-slate-900">1. TỔNG QUAN / EXECUTIVE SUMMARY</p>
-                  <p>Báo cáo này trình bày chi tiết về tiến độ thực hiện dự án. (Nội dung mô phỏng do không tải được file gốc).</p>
-                  <div class="my-8 p-4 bg-slate-50 border border-slate-200 rounded-lg text-center text-slate-500 italic">
-                      [Dữ liệu biểu đồ mô phỏng]
-                  </div>
-              </div>
-           </div>`;
-    } else if (['xls', 'xlsx'].includes(doc.type)) {
-       mockHtml = `
-          <div class="bg-white p-8 min-h-[800px] shadow-sm mx-auto overflow-x-auto">
-             <h2 class="text-xl font-bold text-slate-800 mb-4">${docName}</h2>
-             <table class="w-full border-collapse border border-slate-300 text-sm font-mono">
-               <thead class="bg-slate-100"><tr><th class="border p-2">STT</th><th class="border p-2">Hạng Mục</th><th class="border p-2">Giá Trị</th></tr></thead>
-               <tbody>
-                  <tr><td class="border p-2 text-center">1</td><td class="border p-2">Doanh thu Q1</td><td class="border p-2 text-right">5,000,000,000</td></tr>
-                  <tr><td class="border p-2 text-center">2</td><td class="border p-2">Chi phí</td><td class="border p-2 text-right">3,200,000,000</td></tr>
-                  <tr><td class="border p-2 text-center">...</td><td class="border p-2 text-center">...</td><td class="border p-2 text-center">...</td></tr>
-               </tbody>
-             </table>
-             <p class="text-xs text-slate-400 mt-4 italic">* Bảng tính mô phỏng.</p>
-          </div>`;
-    } else {
-       mockHtml = `<div class="p-12 text-center text-slate-500">File này không hỗ trợ xem trước ở chế độ mô phỏng.</div>`;
-    }
+    // Only used for hardcoded demo items now
+    let mockHtml = `
+       <div class="prose prose-slate max-w-none bg-white p-12 min-h-[800px] shadow-sm mx-auto text-center">
+          <h1 class="text-2xl font-bold text-slate-800 mb-4">${doc.name}</h1>
+          <p class="text-slate-500 italic">Đây là nội dung mô phỏng (Demo Mode) cho các file mẫu.</p>
+       </div>`;
     setDocxContent(mockHtml);
   };
 
   useEffect(() => {
     if (previewDoc) {
         setPdfPageNum(1);
-        // Default scale increased slightly
         setPdfScale(1.2); 
         loadContent();
     }
@@ -285,7 +287,6 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
       if (!pdfDoc || !canvasRef.current) return;
       try {
         const page = await pdfDoc.getPage(pdfPageNum);
-        // Multiply by window.devicePixelRatio for sharp rendering on retina
         const pixelRatio = window.devicePixelRatio || 1;
         const viewport = page.getViewport({ scale: pdfScale * pixelRatio });
         
@@ -295,7 +296,6 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         if (context) {
           canvas.height = viewport.height;
           canvas.width = viewport.width;
-          // Scale down with CSS to match original dimensions
           canvas.style.width = `${viewport.width / pixelRatio}px`;
           canvas.style.height = `${viewport.height / pixelRatio}px`;
 
@@ -349,17 +349,26 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
 
     if (loadError) {
        return (
-          <div className="flex flex-col items-center justify-center h-full max-w-md mx-auto text-center px-6">
+          <div className="flex flex-col items-center justify-center h-full max-w-xl mx-auto text-center px-6">
              <div className="bg-red-500/10 p-4 rounded-full mb-4">
                 <AlertTriangle className="w-10 h-10 text-red-500" />
              </div>
-             <h3 className="text-xl font-bold text-white mb-2">Lỗi hiển thị</h3>
-             <p className="text-slate-400 mb-6">{loadError}</p>
+             <h3 className="text-xl font-bold text-white mb-2">Không thể xem trước</h3>
+             <p className="text-slate-400 mb-6 leading-relaxed">{loadError}</p>
+             {previewDoc.url && (
+                <a 
+                   href={previewDoc.url} 
+                   target="_blank" 
+                   className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg inline-flex items-center gap-2 font-medium transition-colors"
+                >
+                   <Download className="w-4 h-4" /> Tải về máy để xem
+                </a>
+             )}
           </div>
        );
     }
 
-    // 1. Google Viewer for Office Files (Priority)
+    // 1. Google Viewer for Office Files & Fallback for PDF
     if (useGoogleViewer && previewDoc.url) {
         return (
             <div className="w-full h-full bg-white relative">
@@ -408,11 +417,10 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     if (docxContent) {
         return (
           <div className="bg-white text-slate-900 w-full h-full shadow-none overflow-y-auto px-8 py-8">
-             {/* If using Mammoth locally, show warning */}
              {previewDoc.type === 'doc' && !previewDoc.url && (
                  <div className="max-w-4xl mx-auto mb-6 bg-orange-50 border border-orange-200 p-3 rounded-lg flex items-center gap-3 text-orange-800 text-sm">
                     <AlertTriangle className="w-4 h-4" />
-                    <span>Đang xem bản xem trước cục bộ (giản lược). Bảng biểu và hình ảnh có thể không hiển thị chính xác.</span>
+                    <span>Đang xem bản xem trước cục bộ (giản lược). Định dạng có thể không chuẩn 100%.</span>
                  </div>
              )}
              <div 
