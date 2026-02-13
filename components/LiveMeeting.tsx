@@ -1,14 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare, Users, Share, MoreHorizontal, LayoutGrid, X, FileText, Plus, Eye, Download, ChevronRight, Search, UploadCloud, Loader2, ChevronLeft, Minus, ZoomIn, ZoomOut, Maximize, FileSpreadsheet, FileIcon, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare, Users, Share, MoreHorizontal, LayoutGrid, X, FileText, Plus, Eye, Download, ChevronRight, Search, UploadCloud, Loader2, ChevronLeft, Minus, ZoomIn, ZoomOut, Maximize, FileSpreadsheet, FileIcon, RefreshCw, AlertTriangle, ExternalLink } from 'lucide-react';
 import { Meeting, Document, User } from '../types';
 import { USERS, getUserById } from '../data';
 import mammoth from 'mammoth';
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Configure PDF.js worker using CDNJS which provides a reliable standalone worker script
-// compatible with standard Worker API.
+// Configure PDF.js worker
 const pdfjs = (pdfjsLib as any).default || pdfjsLib;
-
 if (typeof window !== 'undefined' && pdfjs.GlobalWorkerOptions) {
   pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 }
@@ -25,11 +23,7 @@ interface LiveMeetingProps {
 export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, onLeave, allDocuments, onAddDocument, onUpdateMeeting }) => {
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCamOn, setIsCamOn] = useState(true);
-  
-  // Sidebar state: 'chat', 'docs', or null. Default is 'docs' to show files immediately.
   const [activeSidebar, setActiveSidebar] = useState<'chat' | 'docs' | null>('docs');
-  
-  // Control Bar Visibility State (Auto-hide)
   const [showControls, setShowControls] = useState(true);
   const controlsTimeoutRef = useRef<any>(null);
   
@@ -38,56 +32,37 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   const [previewDoc, setPreviewDoc] = useState<Document | null>(null);
   const [isAddingDoc, setIsAddingDoc] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Store actual File objects for uploaded files to enable preview (Local Session only)
   const [uploadedFiles, setUploadedFiles] = useState<Record<string, File>>({});
   
-  // DOCX State
+  // Viewers State
   const [docxContent, setDocxContent] = useState<string | null>(null);
-  
-  // PDF State
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [pdfPageNum, setPdfPageNum] = useState(1);
   const [pdfTotalPages, setPdfTotalPages] = useState(0);
-  const [pdfScale, setPdfScale] = useState(1.0);
+  const [pdfScale, setPdfScale] = useState(1.2); // Increased default scale for better quality
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // Animation State for Flip Effect
-  const [pageTransition, setPageTransition] = useState<'none' | 'flipping-next' | 'flipping-prev'>('none');
-  
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [useGoogleViewer, setUseGoogleViewer] = useState(false);
 
-  // Mock participants based on USERS data, excluding current user to avoid duplicate
-  // In a real app, this would come from a websocket/backend
   const otherParticipants = USERS.filter(u => u.id !== currentUser.id).slice(0, 4); 
-
   const isAdmin = currentUser.role === 'admin';
 
   // --- Auto-hide Controls Logic ---
   const resetIdleTimer = () => {
     setShowControls(true);
-    if (controlsTimeoutRef.current) {
-      clearTimeout(controlsTimeoutRef.current);
-    }
-    // Set timer to hide after 10 seconds
-    controlsTimeoutRef.current = setTimeout(() => {
-      setShowControls(false);
-    }, 10000);
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 10000);
   };
 
   useEffect(() => {
-    // Initialize timer
     resetIdleTimer();
-
-    // Attach listeners
     const handleActivity = () => resetIdleTimer();
-    
     window.addEventListener('mousemove', handleActivity);
     window.addEventListener('click', handleActivity);
     window.addEventListener('keydown', handleActivity);
-
     return () => {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
       window.removeEventListener('mousemove', handleActivity);
@@ -95,47 +70,30 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
       window.removeEventListener('keydown', handleActivity);
     };
   }, []);
-  // --------------------------------
 
   const toggleSidebar = (type: 'chat' | 'docs') => {
-    if (activeSidebar === type) {
-      setActiveSidebar(null);
-    } else {
-      setActiveSidebar(type);
-    }
+    setActiveSidebar(activeSidebar === type ? null : type);
   };
 
   const handleAddExistingDocument = (docId: string) => {
     if (!attachedDocIds.includes(docId)) {
         const updatedIds = [...attachedDocIds, docId];
         setAttachedDocIds(updatedIds);
-        
-        // Sync with Supabase: Update Meeting
-        const updatedMeeting: Meeting = {
-            ...meeting,
-            documentIds: updatedIds
-        };
+        const updatedMeeting: Meeting = { ...meeting, documentIds: updatedIds };
         onUpdateMeeting(updatedMeeting);
     }
     setIsAddingDoc(false);
   };
 
-  const handleUploadClick = () => {
-    fileInputRef.current?.click();
-  };
+  const handleUploadClick = () => fileInputRef.current?.click();
 
   const getAttachedDocsResolved = () => {
-      // Look up docs from the global list based on attached IDs
-      return attachedDocIds.map(id => {
-          return allDocuments.find(d => d.id === id);
-      }).filter(Boolean) as Document[];
+      return attachedDocIds.map(id => allDocuments.find(d => d.id === id)).filter(Boolean) as Document[];
   };
 
-  // Update handleFileChange to Persist Data
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
       const files = event.target.files;
       if (!files || files.length === 0) return;
-
       if (files.length > 5) {
           alert("Vui lòng chỉ chọn tối đa 5 file cùng lúc.");
           if (fileInputRef.current) fileInputRef.current.value = '';
@@ -165,42 +123,27 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                   size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
                   updatedAt: new Date().toLocaleDateString('vi-VN'),
                   ownerId: currentUser.id
-                  // NOTE: In live upload, we might not have URL immediately unless we upload to storage first.
-                  // For now, these simulated local uploads won't have a URL, but will have a File object in newFilesMap.
               };
-              
               newDocs.push(newDoc);
               newFilesMap[newDocId] = file;
               newDocIds.push(newDocId);
           });
 
-          // 1. Save new documents to Supabase (via App prop)
           newDocs.forEach(doc => onAddDocument(doc));
-
-          // 2. Update local file map for previewing immediately
           setUploadedFiles(prev => ({ ...prev, ...newFilesMap }));
-          
-          // 3. Update local state and Sync Meeting to Supabase
           const updatedDocIds = [...attachedDocIds, ...newDocIds];
           setAttachedDocIds(updatedDocIds);
           
-          const updatedMeeting: Meeting = {
-            ...meeting,
-            documentIds: updatedDocIds
-          };
+          const updatedMeeting: Meeting = { ...meeting, documentIds: updatedDocIds };
           onUpdateMeeting(updatedMeeting);
-
           setIsAddingDoc(false);
-          
           if (fileInputRef.current) fileInputRef.current.value = '';
       }, 500);
   };
 
-
   const availableDocsToAdd = allDocuments.filter(d => !attachedDocIds.includes(d.id));
 
   // --- PREVIEW LOGIC ---
-
   const loadContent = async () => {
     if (!previewDoc) return;
     
@@ -208,284 +151,183 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     setLoadError(null);
     setDocxContent(null);
     setPdfDoc(null);
+    setUseGoogleViewer(false);
 
-    // --- DEMO MODE PRE-CHECK ---
-    // If we have specific IDs known to be demo/broken, skip network entirely for speed
-    if (['d1', 'd2', 'd4', 'd5'].includes(previewDoc.id) && !previewDoc.url) {
-         // Fall through to mock generator at bottom
-    } else {
-        try {
-          let arrayBuffer: ArrayBuffer | null = null;
-          
-          // 1. Try Local File (Immediate upload in this session)
-          const localFile = uploadedFiles[previewDoc.id];
-          if (localFile) {
-              arrayBuffer = await localFile.arrayBuffer();
-          } 
-          // 2. Try Remote URL
-          else if (previewDoc.url) {
-              try {
-                // Check if it's a blob URL from a previous session (invalid)
-                if (previewDoc.url.startsWith('blob:')) {
-                    throw new Error("Blob URL expired");
-                }
-                const response = await fetch(previewDoc.url);
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                arrayBuffer = await response.arrayBuffer();
-              } catch (fetchErr) {
-                 console.warn("Could not fetch remote URL, switching to Demo Mode:", fetchErr);
-                 // INTENTIONAL: Fall through to Mock Content generation
-              }
-          }
-
-          // 3. Process Real Data if available
-          if (arrayBuffer) {
-              if (previewDoc.type === 'doc') {
-                try {
-                    const result = await mammoth.convertToHtml({ arrayBuffer });
-                    setDocxContent(result.value);
-                    setIsLoadingPreview(false);
-                    return;
-                } catch (e) { console.warn("Mammoth failed", e); }
-              } else if (previewDoc.type === 'pdf') {
-                 try {
-                    const loadingTask = pdfjs.getDocument({ 
-                      data: arrayBuffer,
-                      cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
-                      cMapPacked: true,
-                    });
-                    const pdf = await loadingTask.promise;
-                    setPdfDoc(pdf);
-                    setPdfTotalPages(pdf.numPages);
-                    setPdfPageNum(1);
-                    await pdf.getPage(1);
-                    setPdfScale(1.0);
-                    setIsLoadingPreview(false);
-                    return;
-                 } catch (e) { console.warn("PDF load failed", e); }
-              }
-          }
-        } catch (error) {
-             console.warn("General load failure", error);
-        }
+    // 1. Check for Office Files with Remote URL (Use Google Viewer for 100% fidelity)
+    const isOffice = ['doc', 'xls', 'ppt'].includes(previewDoc.type);
+    const hasRemoteUrl = previewDoc.url && !previewDoc.url.startsWith('blob:');
+    
+    if (isOffice && hasRemoteUrl) {
+        setUseGoogleViewer(true);
+        setIsLoadingPreview(false);
+        return;
     }
 
-    // 4. MOCK CONTENT GENERATION (Fallback for ANY failure or missing URL)
-    // This ensures the user NEVER sees a "Failed to load" screen in the demo.
-    await new Promise(r => setTimeout(r, 600)); // Simulate loading delay
+    // 2. Demo fallback for hardcoded IDs (Mock Content)
+    if (['d1', 'd2', 'd4', 'd5'].includes(previewDoc.id) && !previewDoc.url) {
+        // ... (Keep existing mock logic for pure demo items) ...
+        await new Promise(r => setTimeout(r, 600)); 
+        generateMockContent(previewDoc);
+        setIsLoadingPreview(false);
+        return;
+    }
 
+    // 3. Handle PDF or Local Office Files
+    try {
+      let arrayBuffer: ArrayBuffer | null = null;
+      
+      const localFile = uploadedFiles[previewDoc.id];
+      if (localFile) {
+          arrayBuffer = await localFile.arrayBuffer();
+      } else if (previewDoc.url) {
+          try {
+            const response = await fetch(previewDoc.url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            arrayBuffer = await response.arrayBuffer();
+          } catch (fetchErr) {
+             console.warn("Fetch failed, falling back to mock:", fetchErr);
+             generateMockContent(previewDoc);
+             setIsLoadingPreview(false);
+             return;
+          }
+      }
+
+      if (arrayBuffer) {
+          if (previewDoc.type === 'doc') {
+            // Local DOCX fallback (Mammoth)
+            try {
+                const result = await mammoth.convertToHtml({ arrayBuffer });
+                setDocxContent(result.value);
+            } catch (e) { console.warn("Mammoth failed", e); setLoadError("Không thể đọc file Word này."); }
+          } else if (previewDoc.type === 'pdf') {
+             try {
+                const loadingTask = pdfjs.getDocument({ 
+                  data: arrayBuffer,
+                  cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+                  cMapPacked: true,
+                });
+                const pdf = await loadingTask.promise;
+                setPdfDoc(pdf);
+                setPdfTotalPages(pdf.numPages);
+                setPdfPageNum(1);
+                await pdf.getPage(1);
+             } catch (e) { console.warn("PDF load failed", e); setLoadError("Không thể đọc file PDF này."); }
+          } else {
+             // Local XLS/PPT
+             setLoadError("Chế độ xem trước file Excel/PPT cục bộ chưa được hỗ trợ. Vui lòng đợi upload hoàn tất để xem bản đầy đủ.");
+          }
+      } else {
+          // No buffer, no URL -> Mock
+          generateMockContent(previewDoc);
+      }
+    } catch (error) {
+       console.warn("General load failure", error);
+       generateMockContent(previewDoc);
+    } finally {
+       setIsLoadingPreview(false);
+    }
+  };
+
+  // Helper to generate mock content (reused from previous version)
+  const generateMockContent = (doc: Document) => {
     let mockHtml = '';
-    const docName = previewDoc.name || 'Tài liệu không tên';
+    const docName = doc.name || 'Tài liệu';
 
-    if (['doc', 'pdf'].includes(previewDoc.type)) {
+    if (['doc', 'pdf'].includes(doc.type)) {
        mockHtml = `
-           <div class="prose prose-slate max-w-none bg-white p-8 min-h-[800px] shadow-sm mx-auto">
+           <div class="prose prose-slate max-w-none bg-white p-12 min-h-[800px] shadow-sm mx-auto">
               <div class="border-b-2 border-slate-100 pb-6 mb-8 flex justify-between items-end">
                   <div>
                       <h1 class="text-3xl font-bold text-slate-800 mb-2">${docName}</h1>
                       <p class="text-sm text-slate-400 font-mono uppercase tracking-widest">CONFIDENTIAL • INTERNAL USE ONLY</p>
                   </div>
-                  <div class="text-right">
-                      <p class="text-xs text-slate-400">Ngày tạo: ${previewDoc.updatedAt}</p>
-                      <p class="text-xs text-slate-400">ID: ${previewDoc.id.substring(0,8)}...</p>
-                  </div>
               </div>
-              
               <div class="space-y-6 text-justify text-slate-700 leading-relaxed">
                   <p class="font-bold text-lg text-slate-900">1. TỔNG QUAN / EXECUTIVE SUMMARY</p>
-                  <p>
-                      Báo cáo này trình bày chi tiết về tiến độ thực hiện dự án <strong>${docName.replace(/\.(pdf|docx|doc)$/i, '')}</strong>. 
-                      Do không thể tải dữ liệu gốc từ máy chủ (do file bị xóa hoặc hết hạn), hệ thống đã chuyển sang 
-                      <span class="bg-yellow-100 text-yellow-800 px-1 py-0.5 rounded font-bold text-xs border border-yellow-200">CHẾ ĐỘ MÔ PHỎNG (SIMULATION MODE)</span> 
-                      để đảm bảo cuộc họp không bị gián đoạn.
-                  </p>
-                  <p>
-                       Trong giai đoạn vừa qua, toàn bộ các chỉ số KPIs đều đạt mức kỳ vọng. Đội ngũ nhân sự đã hoàn thành 
-                       95% khối lượng công việc được giao. Các vấn đề tồn đọng chủ yếu liên quan đến thủ tục hành chính 
-                       và đang được bộ phận pháp chế xử lý triệt để.
-                  </p>
-
-                  <p class="font-bold text-lg text-slate-900 mt-8">2. NỘI DUNG CHÍNH / KEY HIGHLIGHTS</p>
-                  <ul class="list-disc pl-5 space-y-2">
-                      <li><strong>Tăng trưởng doanh thu:</strong> Đạt 120% so với cùng kỳ năm ngoái.</li>
-                      <li><strong>Mở rộng thị trường:</strong> Đã tiếp cận thêm 3 đối tác chiến lược tại khu vực phía Nam.</li>
-                      <li><strong>Tối ưu hóa chi phí:</strong> Giảm 15% chi phí vận hành nhờ áp dụng chuyển đổi số eCabinet.</li>
-                  </ul>
-
-                  <div class="my-8 p-4 bg-slate-50 border border-slate-200 rounded-lg">
-                      <p class="text-center italic text-slate-500 text-sm">
-                          (Biểu đồ tăng trưởng dự kiến được hiển thị tại đây trong tài liệu gốc)
-                      </p>
-                      <div class="h-40 flex items-end justify-center gap-4 mt-4 px-10">
-                          <div class="w-12 bg-emerald-200 h-[40%] rounded-t"></div>
-                          <div class="w-12 bg-emerald-300 h-[60%] rounded-t"></div>
-                          <div class="w-12 bg-emerald-400 h-[50%] rounded-t"></div>
-                          <div class="w-12 bg-emerald-500 h-[80%] rounded-t"></div>
-                          <div class="w-12 bg-emerald-600 h-[100%] rounded-t"></div>
-                      </div>
-                  </div>
-
-                  <p class="font-bold text-lg text-slate-900">3. KẾT LUẬN VÀ KIẾN NGHỊ / CONCLUSION</p>
-                  <p>
-                      Dựa trên các phân tích nêu trên, Ban Giám Đốc đề xuất tiếp tục duy trì chiến lược hiện tại 
-                      trong Quý tới. Đồng thời, cần đẩy mạnh công tác đào tạo nội bộ để nâng cao năng lực đội ngũ.
-                  </p>
-                  
-                  <div class="mt-12 pt-8 border-t border-slate-200 flex justify-around">
-                       <div class="text-center">
-                           <p class="text-xs font-bold text-slate-400 uppercase mb-16">Người lập biểu</p>
-                           <p class="font-bold font-signature text-xl text-slate-600">Nguyễn Văn A</p>
-                       </div>
-                       <div class="text-center">
-                           <p class="text-xs font-bold text-slate-400 uppercase mb-16">Giám đốc phê duyệt</p>
-                           <p class="font-bold font-signature text-xl text-slate-600">Trần Thị B</p>
-                       </div>
+                  <p>Báo cáo này trình bày chi tiết về tiến độ thực hiện dự án. (Nội dung mô phỏng do không tải được file gốc).</p>
+                  <div class="my-8 p-4 bg-slate-50 border border-slate-200 rounded-lg text-center text-slate-500 italic">
+                      [Dữ liệu biểu đồ mô phỏng]
                   </div>
               </div>
-           </div>
-       `;
-    } else if (previewDoc.type === 'xls' || previewDoc.type === 'xlsx') {
+           </div>`;
+    } else if (['xls', 'xlsx'].includes(doc.type)) {
        mockHtml = `
           <div class="bg-white p-8 min-h-[800px] shadow-sm mx-auto overflow-x-auto">
-               <div class="flex items-center gap-3 mb-6">
-                  <div class="p-2 bg-emerald-100 rounded text-emerald-700"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="16" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg></div>
-                  <h2 class="text-xl font-bold text-slate-800">${docName}</h2>
-               </div>
-               <table class="w-full border-collapse border border-slate-300 text-sm font-mono">
-                  <thead class="bg-slate-100 text-slate-600">
-                    <tr>
-                      <th class="border border-slate-300 p-2 text-center w-12">#</th>
-                      <th class="border border-slate-300 p-2 text-left">Hạng Mục / Item</th>
-                      <th class="border border-slate-300 p-2 text-center">ĐVT</th>
-                      <th class="border border-slate-300 p-2 text-right">Số Lượng</th>
-                      <th class="border border-slate-300 p-2 text-right">Đơn Giá (VNĐ)</th>
-                      <th class="border border-slate-300 p-2 text-right">Thành Tiền</th>
-                      <th class="border border-slate-300 p-2 text-left">Ghi Chú</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                     ${Array.from({length: 15}).map((_, i) => `
-                       <tr class="${i % 2 === 0 ? 'bg-white' : 'bg-slate-50'} hover:bg-emerald-50">
-                         <td class="border border-slate-300 p-2 text-center">${i + 1}</td>
-                         <td class="border border-slate-300 p-2">Hạng mục vật tư chi tiết số ${i + 1}</td>
-                         <td class="border border-slate-300 p-2 text-center">Cái</td>
-                         <td class="border border-slate-300 p-2 text-right">${Math.floor(Math.random() * 100) + 1}</td>
-                         <td class="border border-slate-300 p-2 text-right">${(Math.floor(Math.random() * 500) * 1000).toLocaleString('vi-VN')}</td>
-                         <td class="border border-slate-300 p-2 text-right font-bold text-slate-700">${(Math.floor(Math.random() * 5000) * 1000).toLocaleString('vi-VN')}</td>
-                         <td class="border border-slate-300 p-2 text-slate-500 italic">Dữ liệu mẫu</td>
-                       </tr>
-                     `).join('')}
-                  </tbody>
-                  <tfoot class="bg-slate-100 font-bold">
-                      <tr>
-                          <td colspan="5" class="border border-slate-300 p-2 text-right text-slate-700">TỔNG CỘNG:</td>
-                          <td class="border border-slate-300 p-2 text-right text-emerald-700">1,250,000,000</td>
-                          <td class="border border-slate-300 p-2"></td>
-                      </tr>
-                  </tfoot>
-               </table>
-               <p class="text-xs text-slate-400 mt-4 italic">* Bảng tính này được tạo tự động bởi chế độ Demo Viewer do không tải được file gốc.</p>
-          </div>
-       `;
+             <h2 class="text-xl font-bold text-slate-800 mb-4">${docName}</h2>
+             <table class="w-full border-collapse border border-slate-300 text-sm font-mono">
+               <thead class="bg-slate-100"><tr><th class="border p-2">STT</th><th class="border p-2">Hạng Mục</th><th class="border p-2">Giá Trị</th></tr></thead>
+               <tbody>
+                  <tr><td class="border p-2 text-center">1</td><td class="border p-2">Doanh thu Q1</td><td class="border p-2 text-right">5,000,000,000</td></tr>
+                  <tr><td class="border p-2 text-center">2</td><td class="border p-2">Chi phí</td><td class="border p-2 text-right">3,200,000,000</td></tr>
+                  <tr><td class="border p-2 text-center">...</td><td class="border p-2 text-center">...</td><td class="border p-2 text-center">...</td></tr>
+               </tbody>
+             </table>
+             <p class="text-xs text-slate-400 mt-4 italic">* Bảng tính mô phỏng.</p>
+          </div>`;
     } else {
-       mockHtml = `
-          <div class="flex flex-col items-center justify-center h-full bg-slate-100 p-12">
-              <div class="bg-white p-12 rounded-2xl shadow-xl text-center max-w-2xl">
-                  <div class="w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                      <svg class="w-10 h-10 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                  </div>
-                  <h2 class="text-2xl font-bold text-slate-800 mb-2">${docName}</h2>
-                  <p class="text-slate-500 mb-8">
-                      Định dạng <strong>.${previewDoc.type}</strong> hiện đang được xử lý ở chế độ nền hoặc file gốc không khả dụng. 
-                      Vui lòng tải xuống để xem nội dung đầy đủ.
-                  </p>
-                  <button class="bg-slate-900 text-white px-6 py-3 rounded-lg font-bold hover:bg-slate-800 transition-colors shadow-lg">
-                      Tải Xuống Ngay
-                  </button>
-              </div>
-          </div>
-       `;
+       mockHtml = `<div class="p-12 text-center text-slate-500">File này không hỗ trợ xem trước ở chế độ mô phỏng.</div>`;
     }
-
     setDocxContent(mockHtml);
-    setIsLoadingPreview(false);
   };
 
-  // Trigger load when previewDoc changes
   useEffect(() => {
     if (previewDoc) {
         setPdfPageNum(1);
-        setPdfScale(1.0);
-        setPageTransition('none');
+        // Default scale increased slightly
+        setPdfScale(1.2); 
         loadContent();
     }
   }, [previewDoc]);
 
-  // Render PDF Page when state changes
+  // Render PDF
   useEffect(() => {
     const renderPage = async () => {
       if (!pdfDoc || !canvasRef.current) return;
-      
       try {
         const page = await pdfDoc.getPage(pdfPageNum);
-        const viewport = page.getViewport({ scale: pdfScale });
+        // Multiply by window.devicePixelRatio for sharp rendering on retina
+        const pixelRatio = window.devicePixelRatio || 1;
+        const viewport = page.getViewport({ scale: pdfScale * pixelRatio });
+        
         const canvas = canvasRef.current;
         const context = canvas.getContext('2d');
 
         if (context) {
           canvas.height = viewport.height;
           canvas.width = viewport.width;
+          // Scale down with CSS to match original dimensions
+          canvas.style.width = `${viewport.width / pixelRatio}px`;
+          canvas.style.height = `${viewport.height / pixelRatio}px`;
 
           const renderContext = {
             canvasContext: context,
             viewport: viewport,
           };
           await page.render(renderContext).promise;
-          
-          // Reset transition state after render is done
-          // Small timeout to ensure visual sync if using CSS transitions
-          setTimeout(() => setPageTransition('none'), 50);
         }
-      } catch (error) {
-        console.error("Error rendering PDF page:", error);
-      }
+      } catch (error) { console.error("PDF Render error", error); }
     };
-
     renderPage();
   }, [pdfDoc, pdfPageNum, pdfScale]);
 
-  // PDF Controls with Animation
   const changePdfPage = (delta: number) => {
     if (!pdfDoc) return;
     const newPage = pdfPageNum + delta;
-    
-    if (newPage >= 1 && newPage <= pdfTotalPages) {
-      // 1. Start Animation
-      setPageTransition(delta > 0 ? 'flipping-next' : 'flipping-prev');
-      
-      // 2. Delay page change slightly to allow "exit" animation to be visible
-      setTimeout(() => {
-        setPdfPageNum(newPage);
-      }, 300); // 300ms matches the CSS transition time
-    }
+    if (newPage >= 1 && newPage <= pdfTotalPages) setPdfPageNum(newPage);
   };
-
   const changePdfScale = (delta: number) => {
     setPdfScale(prev => Math.max(0.5, Math.min(3.0, prev + delta)));
   };
-
   const fitToScreen = async () => {
       if (!pdfDoc || !containerRef.current) return;
       const page = await pdfDoc.getPage(pdfPageNum);
       const unscaledViewport = page.getViewport({ scale: 1 });
       const { clientWidth, clientHeight } = containerRef.current;
-      const padding = 10;
-      const scaleH = (clientHeight - padding) / unscaledViewport.height;
-      const scaleW = (clientWidth - padding) / unscaledViewport.width;
+      const scaleH = (clientHeight - 20) / unscaledViewport.height;
+      const scaleW = (clientWidth - 20) / unscaledViewport.width;
       setPdfScale(Math.min(scaleH, scaleW));
   };
 
-  // Helper for icons
   const getDocIcon = (type: string) => {
       if (type === 'pdf') return <FileText className="w-6 h-6 text-red-400" />;
       if (type === 'xls' || type === 'xlsx') return <FileSpreadsheet className="w-6 h-6 text-emerald-400" />;
@@ -496,7 +338,6 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   const renderPreviewContent = () => {
     if (!previewDoc) return null;
 
-    // Loading State
     if (isLoadingPreview) {
       return (
          <div className="flex flex-col items-center justify-center h-full text-slate-500">
@@ -506,184 +347,92 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
       );
     }
 
-    // Error State
     if (loadError) {
        return (
           <div className="flex flex-col items-center justify-center h-full max-w-md mx-auto text-center px-6">
              <div className="bg-red-500/10 p-4 rounded-full mb-4">
                 <AlertTriangle className="w-10 h-10 text-red-500" />
              </div>
-             <h3 className="text-xl font-bold text-white mb-2">Không thể tải tài liệu</h3>
+             <h3 className="text-xl font-bold text-white mb-2">Lỗi hiển thị</h3>
              <p className="text-slate-400 mb-6">{loadError}</p>
-             <button 
-                onClick={loadContent}
-                className="flex items-center gap-2 px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors font-medium"
-             >
-                <RefreshCw className="w-4 h-4" /> Thử lại
-             </button>
           </div>
        );
     }
 
-    // Determine if we have real content to show (Either local file OR remote URL OR injected mock content)
-    const hasContent = uploadedFiles[previewDoc.id] || previewDoc.url || docxContent;
-    const hasLoadedData = pdfDoc || docxContent;
+    // 1. Google Viewer for Office Files (Priority)
+    if (useGoogleViewer && previewDoc.url) {
+        return (
+            <div className="w-full h-full bg-white relative">
+                <iframe 
+                    src={`https://docs.google.com/viewer?url=${encodeURIComponent(previewDoc.url)}&embedded=true`}
+                    className="w-full h-full border-none"
+                    title="Document Preview"
+                ></iframe>
+                <div className="absolute bottom-4 right-4 bg-white/90 px-3 py-1 rounded text-xs text-slate-500 shadow border border-slate-200 pointer-events-none">
+                    Powered by Google Viewer
+                </div>
+            </div>
+        );
+    }
 
-    if (hasContent || hasLoadedData) {
-      // PDF Handling with Custom Viewer
-      if (previewDoc.type === 'pdf' && pdfDoc) {
+    // 2. PDF Viewer (Custom)
+    if (previewDoc.type === 'pdf' && pdfDoc) {
         return (
           <div className="flex flex-col h-full w-full bg-slate-900 rounded-none overflow-hidden relative shadow-2xl">
-             <style>{`
-                .book-container {
-                   perspective: 1500px;
-                   /* overflow auto handled by tailwind class */
-                }
-                .pdf-canvas-wrapper {
-                   transition: transform 0.4s ease-in-out, opacity 0.3s ease-in-out;
-                   transform-style: preserve-3d;
-                   transform-origin: center center;
-                   box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.8);
-                }
-                .flipping-next .pdf-canvas-wrapper {
-                   transform: rotateY(-90deg) scale(0.9);
-                   opacity: 0.5;
-                }
-                .flipping-prev .pdf-canvas-wrapper {
-                   transform: rotateY(90deg) scale(0.9);
-                   opacity: 0.5;
-                }
-             `}</style>
-
-             {/* PDF Toolbar */}
              <div className="h-12 bg-white border-b border-gray-200 flex items-center justify-center gap-4 px-4 shadow-sm z-10 shrink-0 select-none">
                 <div className="flex items-center gap-1">
-                   <button 
-                     onClick={() => changePdfPage(-1)}
-                     disabled={pdfPageNum <= 1}
-                     className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30 transition-colors"
-                   >
-                     <ChevronLeft className="w-5 h-5 text-gray-700" />
-                   </button>
-                   <span className="text-sm font-medium text-gray-700 min-w-[80px] text-center">
-                      Trang {pdfPageNum} / {pdfTotalPages}
-                   </span>
-                   <button 
-                     onClick={() => changePdfPage(1)}
-                     disabled={pdfPageNum >= pdfTotalPages}
-                     className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30 transition-colors"
-                   >
-                     <ChevronRight className="w-5 h-5 text-gray-700" />
-                   </button>
+                   <button onClick={() => changePdfPage(-1)} disabled={pdfPageNum <= 1} className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30"><ChevronLeft className="w-5 h-5 text-gray-700" /></button>
+                   <span className="text-sm font-medium text-gray-700 min-w-[80px] text-center">Trang {pdfPageNum} / {pdfTotalPages}</span>
+                   <button onClick={() => changePdfPage(1)} disabled={pdfPageNum >= pdfTotalPages} className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30"><ChevronRight className="w-5 h-5 text-gray-700" /></button>
                 </div>
-                
                 <div className="w-px h-6 bg-gray-300 mx-2"></div>
-                
                 <div className="flex items-center gap-1">
-                   <button 
-                     onClick={() => changePdfScale(-0.1)}
-                     className="p-1.5 rounded hover:bg-gray-100 transition-colors"
-                     title="Thu nhỏ"
-                   >
-                     <Minus className="w-5 h-5 text-gray-700" />
-                   </button>
-                   <span className="text-sm font-medium text-gray-700 min-w-[50px] text-center">
-                      {Math.round(pdfScale * 100)}%
-                   </span>
-                   <button 
-                     onClick={() => changePdfScale(0.1)}
-                     className="p-1.5 rounded hover:bg-gray-100 transition-colors"
-                     title="Phóng to"
-                   >
-                     <Plus className="w-5 h-5 text-gray-700" />
-                   </button>
-                   <button 
-                     onClick={fitToScreen}
-                     className="p-1.5 rounded hover:bg-gray-100 transition-colors ml-2 group"
-                     title="Vừa màn hình"
-                   >
-                     <Maximize className="w-4 h-4 text-gray-600 group-hover:text-emerald-600" />
-                   </button>
+                   <button onClick={() => changePdfScale(-0.1)} className="p-1.5 rounded hover:bg-gray-100"><Minus className="w-5 h-5 text-gray-700" /></button>
+                   <span className="text-sm font-medium text-gray-700 min-w-[50px] text-center">{Math.round(pdfScale * 100)}%</span>
+                   <button onClick={() => changePdfScale(0.1)} className="p-1.5 rounded hover:bg-gray-100"><Plus className="w-5 h-5 text-gray-700" /></button>
+                   <button onClick={fitToScreen} className="p-1.5 rounded hover:bg-gray-100 ml-2"><Maximize className="w-4 h-4 text-gray-600" /></button>
                 </div>
              </div>
-
-             {/* Container for Viewer + Overlays */}
              <div className="flex-1 relative bg-slate-900 overflow-hidden">
-                 
-                 {/* Navigation Overlay Buttons - z-20 - Fixed relative to viewer area */}
-                 {pdfPageNum > 1 && (
-                  <button 
-                    onClick={() => changePdfPage(-1)}
-                    className="absolute left-4 top-1/2 -translate-y-1/2 z-20 p-3 bg-black/30 hover:bg-black/60 text-white rounded-full transition-all hover:scale-110 backdrop-blur-sm shadow-xl group hidden md:flex"
-                  >
-                    <ChevronLeft className="w-8 h-8 group-hover:-translate-x-1 transition-transform" />
-                  </button>
-                )}
-
-                {pdfPageNum < pdfTotalPages && (
-                  <button 
-                    onClick={() => changePdfPage(1)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 z-20 p-3 bg-black/30 hover:bg-black/60 text-white rounded-full transition-all hover:scale-110 backdrop-blur-sm shadow-xl group hidden md:flex"
-                  >
-                    <ChevronRight className="w-8 h-8 group-hover:translate-x-1 transition-transform" />
-                  </button>
-                )}
-
-                {/* Scrollable Canvas Container */}
-                <div 
-                    ref={containerRef} 
-                    className={`w-full h-full overflow-auto flex justify-center book-container ${pageTransition}`}
-                >
-                    <div className="pdf-canvas-wrapper bg-white shadow-2xl">
-                        <canvas 
-                            ref={canvasRef} 
-                            style={{ maxWidth: 'none', display: 'block' }} 
-                        />
+                <div ref={containerRef} className="w-full h-full overflow-auto flex justify-center p-8">
+                    <div className="bg-white shadow-2xl">
+                        <canvas ref={canvasRef} style={{ display: 'block' }} />
                     </div>
                 </div>
              </div>
           </div>
         );
-      }
+    }
 
-      // DOCX / HTML Handling
-      if (docxContent) {
+    // 3. Fallback / Mock HTML (Docx local or Demo)
+    if (docxContent) {
         return (
           <div className="bg-white text-slate-900 w-full h-full shadow-none overflow-y-auto px-8 py-8">
+             {/* If using Mammoth locally, show warning */}
+             {previewDoc.type === 'doc' && !previewDoc.url && (
+                 <div className="max-w-4xl mx-auto mb-6 bg-orange-50 border border-orange-200 p-3 rounded-lg flex items-center gap-3 text-orange-800 text-sm">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>Đang xem bản xem trước cục bộ (giản lược). Bảng biểu và hình ảnh có thể không hiển thị chính xác.</span>
+                 </div>
+             )}
              <div 
                className="prose prose-slate max-w-none prose-headings:text-slate-800 prose-p:text-slate-600 prose-a:text-emerald-600 prose-lg mx-auto"
                dangerouslySetInnerHTML={{ __html: docxContent || '' }} 
              />
           </div>
         );
-      }
     }
 
-    // 2. Fallback if URL is missing (Only for non-demo files that genuinely fail)
     return (
-        <div className="bg-white text-slate-900 w-full h-full shadow-none px-8 py-8 overflow-y-auto">
-          <div className="max-w-6xl mx-auto">
-            <h1 className="text-3xl font-bold mb-6 text-slate-800">{previewDoc.name.replace(/_/g, ' ').replace(/\.[^/.]+$/, "")}</h1>
-            <p className="text-sm text-slate-500 mb-8 border-b pb-4">Được tạo bởi Admin System vào ngày {previewDoc.updatedAt}</p>
-            
-            <div className="space-y-4 text-justify leading-relaxed text-slate-700 text-lg">
-                <div className="bg-amber-50 border-l-4 border-amber-500 p-4 mb-6">
-                  <p className="text-amber-700 font-medium">File chưa có liên kết thực (Missing URL)</p>
-                  <p className="text-sm text-amber-600 mt-1">
-                     Hệ thống nhận diện file này chưa có đường dẫn (URL) lưu trữ trên server. 
-                     Có thể file được tải lên trước khi tính năng lưu trữ được kích hoạt, hoặc quá trình đồng bộ bị lỗi.
-                  </p>
-                </div>
-                
-                <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 text-sm text-blue-800">
-                    <p className="font-bold mb-1">Hướng dẫn khắc phục:</p>
-                    <ul className="list-disc pl-5 space-y-1">
-                        <li>Nếu bạn là Admin: Vui lòng xóa file này và tải lên lại trong mục "Tài liệu".</li>
-                        <li>Nếu bạn là User: Vui lòng liên hệ Admin để cập nhật lại file này.</li>
-                    </ul>
-                </div>
-            </div>
-          </div>
+        <div className="flex flex-col items-center justify-center h-full bg-slate-100">
+           <div className="text-center p-8">
+              <p className="text-slate-500 mb-4">Không thể hiển thị bản xem trước cho tài liệu này.</p>
+              {previewDoc.url && (
+                  <a href={previewDoc.url} target="_blank" className="px-4 py-2 bg-emerald-600 text-white rounded-lg inline-flex items-center gap-2">
+                     <Download className="w-4 h-4" /> Tải về máy
+                  </a>
+              )}
+           </div>
         </div>
     );
   };
@@ -696,7 +445,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
           type="file" 
           ref={fileInputRef} 
           className="hidden" 
-          accept=".pdf,.doc,.docx"
+          accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
           multiple
           onChange={handleFileChange} 
         />
@@ -718,21 +467,19 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         </div>
       </div>
 
-      {/* Main Content Area - Extends to bottom (removed padding/margins for bottom bar) */}
+      {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden relative pb-0">
         
         {/* Video Grid */}
         <div className="flex-1 p-4 grid grid-cols-2 gap-4 auto-rows-fr overflow-y-auto">
-           {/* Current User (You) */}
+           {/* Current User */}
            <div className="bg-slate-800 rounded-xl relative overflow-hidden flex items-center justify-center group border border-slate-700">
               {isCamOn ? (
                 <div className="absolute inset-0 bg-gradient-to-br from-slate-700 to-slate-800 flex items-center justify-center">
                    <span className="text-slate-500 text-sm">Camera Stream Placeholder</span>
                 </div>
               ) : (
-                <div className="w-24 h-24 rounded-full bg-emerald-600 flex items-center justify-center text-3xl font-bold shadow-lg">
-                  Tôi
-                </div>
+                <div className="w-24 h-24 rounded-full bg-emerald-600 flex items-center justify-center text-3xl font-bold shadow-lg">Tôi</div>
               )}
               <div className="absolute bottom-4 left-4 bg-black/40 backdrop-blur-md px-3 py-1 rounded-lg text-sm font-medium flex items-center gap-2">
                 Bạn {isMicOn ? '' : '(Đã tắt tiếng)'}
@@ -745,13 +492,8 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
            {/* Other Participants */}
            {otherParticipants.map((user) => (
              <div key={user.id} className="bg-slate-800 rounded-xl relative overflow-hidden flex items-center justify-center border border-slate-700">
-                <div className="w-20 h-20 rounded-full bg-slate-600 flex items-center justify-center text-2xl font-bold text-slate-300">
-                  {user.name.charAt(0)}
-                </div>
-                <div className="absolute bottom-4 left-4 bg-black/40 backdrop-blur-md px-3 py-1 rounded-lg text-sm font-medium">
-                  {user.name}
-                </div>
-                {/* Simulate talking state */}
+                <div className="w-20 h-20 rounded-full bg-slate-600 flex items-center justify-center text-2xl font-bold text-slate-300">{user.name.charAt(0)}</div>
+                <div className="absolute bottom-4 left-4 bg-black/40 backdrop-blur-md px-3 py-1 rounded-lg text-sm font-medium">{user.name}</div>
                 {user.id === 'u2' && (
                   <div className="absolute inset-0 border-2 border-emerald-500 rounded-xl pointer-events-none opacity-50"></div>
                 )}
@@ -759,15 +501,11 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
            ))}
         </div>
 
-        {/* Right Sidebar (Chat or Docs) */}
+        {/* Right Sidebar */}
         {activeSidebar && (
           <div className="w-80 bg-slate-800 border-l border-slate-700 flex flex-col animate-in slide-in-from-right duration-200 shadow-2xl z-20">
-            
-            {/* Sidebar Header */}
             <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
-              <h3 className="font-bold">
-                {activeSidebar === 'chat' ? 'Tin nhắn' : 'Tài liệu cuộc họp'}
-              </h3>
+              <h3 className="font-bold">{activeSidebar === 'chat' ? 'Tin nhắn' : 'Tài liệu cuộc họp'}</h3>
               <button onClick={() => setActiveSidebar(null)} className="hover:bg-slate-700 p-1 rounded"><X className="w-5 h-5" /></button>
             </div>
 
@@ -779,10 +517,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                    <div className="flex gap-3">
                       <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-xs font-bold shrink-0">A</div>
                       <div>
-                        <div className="flex items-baseline gap-2">
-                           <span className="font-bold text-sm">Nguyễn Văn A</span>
-                           <span className="text-xs text-slate-400">09:32</span>
-                        </div>
+                        <div className="flex items-baseline gap-2"><span className="font-bold text-sm">Nguyễn Văn A</span><span className="text-xs text-slate-400">09:32</span></div>
                         <p className="text-sm text-slate-300 mt-1">Mọi người đã xem tài liệu đính kèm chưa ạ?</p>
                       </div>
                    </div>
@@ -800,7 +535,6 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
             {activeSidebar === 'docs' && (
               <div className="flex-1 flex flex-col overflow-hidden">
                  <div className="p-4 flex-1 overflow-y-auto space-y-3">
-                    {/* Add Doc Button (Admin only simulation) */}
                     {isAdmin && (
                       <button 
                         onClick={() => setIsAddingDoc(!isAddingDoc)}
@@ -811,50 +545,30 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                       </button>
                     )}
 
-                    {/* Add Doc Dropdown/Panel */}
                     {isAddingDoc && (
                       <div className="bg-slate-700 rounded-lg p-2 space-y-2 animate-in slide-in-from-top-2 duration-200 border border-slate-600">
-                        {/* Upload Option */}
-                        <button 
-                           onClick={handleUploadClick}
-                           className="w-full text-left px-3 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded flex items-center gap-2 mb-2 font-medium transition-colors"
-                        >
-                           <UploadCloud className="w-4 h-4" />
-                           Tải lên từ máy tính (Tối đa 5 file)
+                        <button onClick={handleUploadClick} className="w-full text-left px-3 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded flex items-center gap-2 mb-2 font-medium transition-colors">
+                           <UploadCloud className="w-4 h-4" /> Tải lên từ máy tính
                         </button>
-                        
                         <div className="border-t border-slate-600 my-2"></div>
-
                         <div className="px-2 py-1 text-xs text-slate-400 font-medium uppercase">Chọn từ kho</div>
                         {availableDocsToAdd.length > 0 ? (
                            <div className="max-h-40 overflow-y-auto space-y-1">
                              {availableDocsToAdd.map(doc => (
-                               <button 
-                                 key={doc.id}
-                                 onClick={() => handleAddExistingDocument(doc.id)}
-                                 className="w-full text-left px-2 py-1.5 text-sm hover:bg-slate-600 rounded flex items-center gap-2 truncate group"
-                               >
+                               <button key={doc.id} onClick={() => handleAddExistingDocument(doc.id)} className="w-full text-left px-2 py-1.5 text-sm hover:bg-slate-600 rounded flex items-center gap-2 truncate group">
                                  <Plus className="w-3 h-3 text-slate-500 group-hover:text-emerald-400" />
                                  <FileText className="w-3 h-3 text-slate-400" />
                                  <span className="truncate text-slate-200">{doc.name}</span>
                                </button>
                              ))}
                            </div>
-                        ) : (
-                          <div className="p-2 text-xs text-slate-500 text-center">Không còn tài liệu có sẵn</div>
-                        )}
+                        ) : (<div className="p-2 text-xs text-slate-500 text-center">Không còn tài liệu có sẵn</div>)}
                       </div>
                     )}
 
-                    {/* List Attached Docs */}
                     <div className="space-y-2 mt-4">
                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Đã đính kèm ({getAttachedDocsResolved().length})</h4>
-                       {getAttachedDocsResolved().length === 0 ? (
-                         <div className="text-center py-8 text-slate-500 text-sm bg-slate-800/50 rounded-lg border border-slate-800 border-dashed">
-                            Chưa có tài liệu đính kèm
-                         </div>
-                       ) : (
-                         getAttachedDocsResolved().map(doc => (
+                       {getAttachedDocsResolved().map(doc => (
                            <div key={doc.id} className="bg-slate-700/50 border border-slate-700 p-3 rounded-lg group hover:border-slate-600 transition-colors">
                               <div className="flex items-start justify-between gap-2">
                                 <div className="flex items-start gap-3 overflow-hidden">
@@ -868,30 +582,17 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                                 </div>
                               </div>
                               <div className="mt-3 flex gap-2">
-                                <button 
-                                  onClick={() => setPreviewDoc(doc)}
-                                  className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors text-slate-300 hover:text-white"
-                                >
+                                <button onClick={() => setPreviewDoc(doc)} className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors text-slate-300 hover:text-white">
                                   <Eye className="w-3 h-3" /> Xem
                                 </button>
-                                {doc.url ? (
-                                    <a 
-                                      href={doc.url}
-                                      download
-                                      target="_blank"
-                                      className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors text-slate-300 hover:text-white"
-                                    >
+                                {doc.url && (
+                                    <a href={doc.url} download target="_blank" className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors text-slate-300 hover:text-white">
                                       <Download className="w-3 h-3" /> Tải
                                     </a>
-                                ) : (
-                                    <button className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors text-slate-300 hover:text-white">
-                                      <Download className="w-3 h-3" /> Tải
-                                    </button>
                                 )}
                               </div>
                            </div>
-                         ))
-                       )}
+                         ))}
                     </div>
                  </div>
               </div>
@@ -902,38 +603,32 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         {/* Preview Modal Overlay */}
         {previewDoc && (
           <div className="absolute inset-0 z-50 bg-slate-900/95 backdrop-blur-md flex flex-col animate-in fade-in duration-200">
-            {/* Preview Toolbar */}
             <div className="h-14 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-6 shrink-0 shadow-lg z-10">
                <div className="flex items-center gap-3 text-white overflow-hidden">
-                  <div className="p-1.5 bg-emerald-500/20 rounded-lg">
-                    {getDocIcon(previewDoc.type)}
-                  </div>
+                  <div className="p-1.5 bg-emerald-500/20 rounded-lg">{getDocIcon(previewDoc.type)}</div>
                   <span className="font-bold truncate text-slate-100">{previewDoc.name}</span>
+                  {useGoogleViewer && <span className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded border border-blue-500/30">HQ Preview</span>}
                </div>
                <div className="flex items-center gap-4 shrink-0">
                   <div className="hidden md:flex items-center bg-slate-900 rounded-lg p-1 border border-slate-700">
                      <button className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white" title="Thêm ghi chú"><Plus className="w-4 h-4" /></button>
-                     <span className="px-2 text-xs text-slate-400 font-mono">100%</span>
+                     <span className="px-2 text-xs text-slate-400 font-mono">{previewDoc.type === 'pdf' ? Math.round(pdfScale * 100) + '%' : '100%'}</span>
                      <button className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white"><MoreHorizontal className="w-4 h-4" /></button>
                   </div>
-                  <button 
-                    onClick={() => setPreviewDoc(null)}
-                    className="p-2 hover:bg-red-500/20 hover:text-red-500 rounded-full transition-colors"
-                  >
-                    <X className="w-6 h-6" />
-                  </button>
+                  {previewDoc.url && (
+                    <a href={previewDoc.url} target="_blank" className="p-2 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white" title="Mở trong tab mới"><ExternalLink className="w-5 h-5"/></a>
+                  )}
+                  <button onClick={() => setPreviewDoc(null)} className="p-2 hover:bg-red-500/20 hover:text-red-500 rounded-full transition-colors"><X className="w-6 h-6" /></button>
                </div>
             </div>
 
-            {/* Document Viewer + Right Sidebar Wrapper */}
             <div className="flex-1 flex overflow-hidden relative">
-                {/* Document Viewer Container */}
                 <div className="flex-1 overflow-hidden relative flex items-center justify-center bg-slate-900/50 p-0 flex-col">
                    {renderPreviewContent()}
                 </div>
 
-                {/* Right Sidebar - Attached Files List */}
-                <div className="w-28 md:w-36 bg-slate-900 border-l border-slate-800 p-2 z-30 shrink-0 overflow-y-auto">
+                {/* Right Sidebar List */}
+                <div className="w-28 md:w-36 bg-slate-900 border-l border-slate-800 p-2 z-30 shrink-0 overflow-y-auto hidden md:block">
                    <div className="flex flex-col gap-3 pb-4">
                       {getAttachedDocsResolved().map((doc) => {
                         const isActive = previewDoc.id === doc.id;
@@ -941,20 +636,10 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                           <button
                             key={doc.id}
                             onClick={() => setPreviewDoc(doc)}
-                            className={`
-                              group relative flex flex-col items-center gap-2 p-2 rounded-xl border transition-all w-full
-                              ${isActive 
-                                ? 'bg-emerald-900/20 border-emerald-500/50 ring-1 ring-emerald-500/30' 
-                                : 'bg-slate-800/40 border-slate-700 hover:bg-slate-800 hover:border-slate-600 opacity-60 hover:opacity-100'}
-                            `}
+                            className={`group relative flex flex-col items-center gap-2 p-2 rounded-xl border transition-all w-full ${isActive ? 'bg-emerald-900/20 border-emerald-500/50 ring-1 ring-emerald-500/30' : 'bg-slate-800/40 border-slate-700 hover:bg-slate-800 hover:border-slate-600 opacity-60 hover:opacity-100'}`}
                           >
-                             <div className={`p-1.5 rounded-lg transition-transform group-hover:scale-110 ${isActive ? 'bg-emerald-500/10' : 'bg-slate-700/50'}`}>
-                                {getDocIcon(doc.type)}
-                             </div>
-                             <span className={`text-[10px] font-medium truncate w-full text-center leading-tight ${isActive ? 'text-emerald-100' : 'text-slate-400'}`}>
-                               {doc.name}
-                             </span>
-                             {isActive && <div className="absolute top-2 right-2 w-2 h-2 bg-emerald-500 rounded-full border border-slate-900 shadow-sm animate-pulse" />}
+                             <div className={`p-1.5 rounded-lg transition-transform group-hover:scale-110 ${isActive ? 'bg-emerald-500/10' : 'bg-slate-700/50'}`}>{getDocIcon(doc.type)}</div>
+                             <span className={`text-[10px] font-medium truncate w-full text-center leading-tight ${isActive ? 'text-emerald-100' : 'text-slate-400'}`}>{doc.name}</span>
                           </button>
                         )
                       })}
@@ -965,61 +650,18 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         )}
       </div>
 
-      {/* Bottom Controls (Main Meeting) - Fixed & Auto-hide */}
-      <div 
-         className={`
-           absolute bottom-0 left-0 right-0 h-20 
-           bg-slate-800/95 backdrop-blur-md border-t border-slate-700 
-           flex items-center justify-center gap-4 px-6 z-40 shrink-0 
-           transition-transform duration-500 ease-in-out
-           ${showControls ? 'translate-y-0' : 'translate-y-full'}
-         `}
-      >
+      <div className={`absolute bottom-0 left-0 right-0 h-20 bg-slate-800/95 backdrop-blur-md border-t border-slate-700 flex items-center justify-center gap-4 px-6 z-40 shrink-0 transition-transform duration-500 ease-in-out ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => setIsMicOn(!isMicOn)}
-              className={`p-4 rounded-full transition-all ${isMicOn ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}
-              title={isMicOn ? "Tắt Micro" : "Bật Micro"}
-            >
-              {isMicOn ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
-            </button>
-            <button 
-              onClick={() => setIsCamOn(!isCamOn)}
-              className={`p-4 rounded-full transition-all ${isCamOn ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}
-              title={isCamOn ? "Tắt Camera" : "Bật Camera"}
-            >
-              {isCamOn ? <Video className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}
-            </button>
+            <button onClick={() => setIsMicOn(!isMicOn)} className={`p-4 rounded-full transition-all ${isMicOn ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}>{isMicOn ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}</button>
+            <button onClick={() => setIsCamOn(!isCamOn)} className={`p-4 rounded-full transition-all ${isCamOn ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}>{isCamOn ? <Video className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}</button>
          </div>
-
          <div className="w-px h-10 bg-slate-600 mx-2"></div>
-
          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => toggleSidebar('chat')}
-              className={`p-3 rounded-xl hover:bg-slate-600 text-slate-200 transition-colors ${activeSidebar === 'chat' ? 'bg-emerald-600 text-white' : 'bg-slate-700/50'}`} 
-              title="Trò chuyện"
-            >
-               <MessageSquare className="w-5 h-5" />
-            </button>
-            <button 
-              onClick={() => toggleSidebar('docs')}
-              className={`p-3 rounded-xl hover:bg-slate-600 text-slate-200 transition-colors ${activeSidebar === 'docs' ? 'bg-emerald-600 text-white' : 'bg-slate-700/50'}`} 
-              title="Tài liệu cuộc họp"
-            >
-               <FileText className="w-5 h-5" />
-            </button>
+            <button onClick={() => toggleSidebar('chat')} className={`p-3 rounded-xl hover:bg-slate-600 text-slate-200 transition-colors ${activeSidebar === 'chat' ? 'bg-emerald-600 text-white' : 'bg-slate-700/50'}`}><MessageSquare className="w-5 h-5" /></button>
+            <button onClick={() => toggleSidebar('docs')} className={`p-3 rounded-xl hover:bg-slate-600 text-slate-200 transition-colors ${activeSidebar === 'docs' ? 'bg-emerald-600 text-white' : 'bg-slate-700/50'}`}><FileText className="w-5 h-5" /></button>
          </div>
-
          <div className="w-px h-10 bg-slate-600 mx-2"></div>
-
-         <button 
-           onClick={onLeave}
-           className="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-full font-bold flex items-center gap-2 transition-colors shadow-lg shadow-red-500/20"
-         >
-            <PhoneOff className="w-5 h-5" />
-            <span className="hidden md:inline">Rời cuộc họp</span>
-         </button>
+         <button onClick={onLeave} className="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-full font-bold flex items-center gap-2 transition-colors shadow-lg shadow-red-500/20"><PhoneOff className="w-5 h-5" /><span className="hidden md:inline">Rời cuộc họp</span></button>
       </div>
     </div>
   );
