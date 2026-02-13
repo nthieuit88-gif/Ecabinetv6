@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FileText, FileSpreadsheet, FileIcon, Download, Trash2, Search, UploadCloud, Filter, Loader2, Edit, AlertCircle, Database } from 'lucide-react';
+import { FileText, FileSpreadsheet, FileIcon, Download, Trash2, Search, UploadCloud, Filter, Loader2, Edit, AlertCircle, Database, Link2, Copy, Check, ExternalLink, Globe } from 'lucide-react';
 import { getUserById } from '../data';
 import { Document, User } from '../types';
 import { supabase } from '../supabaseClient';
@@ -62,6 +62,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isAdmin = currentUser.role === 'admin';
   const [uploadWarning, setUploadWarning] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (pendingAction === 'upload' && isAdmin) {
@@ -91,6 +92,12 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     onUpdateDocument(updatedDoc);
   };
 
+  const handleCopyUrl = (id: string, url: string) => {
+    navigator.clipboard.writeText(url);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -105,6 +112,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
         let publicUrl = '';
         
         // 1. Upload to Supabase
+        console.log(`[Upload] Starting upload for ${cleanName}...`);
         const { data: uploadData, error: uploadError } = await supabase.storage
             .from('documents')
             .upload(filePath, file, {
@@ -114,7 +122,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
 
         if (uploadError) {
             console.warn('Supabase Storage upload failed. Using Local Fallback.', uploadError.message);
-            setUploadWarning(`Cảnh báo: Không thể lưu file lên server. File sẽ chỉ được lưu trong bộ nhớ máy này.`);
+            setUploadWarning(`Cảnh báo: Không thể lưu file lên server (${uploadError.message}). File sẽ chỉ được lưu trong bộ nhớ máy này.`);
             publicUrl = URL.createObjectURL(file);
         } else {
             const storagePath = uploadData?.path || filePath;
@@ -122,6 +130,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                 .from('documents')
                 .getPublicUrl(storagePath);
             publicUrl = publicUrlData.publicUrl;
+            console.log(`[Upload] Success! Public URL: ${publicUrl}`);
         }
 
         // 2. Create Doc Record
@@ -137,7 +146,6 @@ export const DocumentList: React.FC<DocumentListProps> = ({
         };
 
         // 3. IMPORTANT: Save to IndexedDB immediately for this user (Admin)
-        // This ensures the uploader can preview it perfectly without re-downloading
         await saveFileToLocal(newDocId, file);
 
         onAddDocument(newDoc);
@@ -251,7 +259,9 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             <tbody className="divide-y divide-gray-100">
               {documents.map((doc) => {
                 const owner = getUserById(doc.ownerId);
-                const isLocal = doc.url && doc.url.startsWith('blob:');
+                const isLocalBlob = doc.url && doc.url.startsWith('blob:');
+                const isSupabaseUrl = doc.url && !isLocalBlob;
+
                 return (
                   <tr key={doc.id} className="hover:bg-gray-50 transition-colors group">
                     <td className="px-6 py-4">
@@ -261,14 +271,35 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                              <span 
-                                className={`font-medium text-sm block text-gray-800`}
-                              >
-                                {doc.name}
-                              </span>
-                              {isLocal && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded border border-orange-200 font-bold" title="File này chưa được lưu lên Server">Unsynced</span>}
+                              <span className="font-medium text-sm block text-gray-800">{doc.name}</span>
+                              {isLocalBlob && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded border border-orange-200 font-bold" title="File này chưa được lưu lên Server">Unsynced</span>}
                           </div>
-                          <p className="text-xs text-gray-400 uppercase mt-0.5">{doc.type}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                             <span className="text-xs text-gray-400 uppercase">{doc.type}</span>
+                             
+                             {/* URL Debugger Tools */}
+                             {isSupabaseUrl && (
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                   <div className="w-px h-3 bg-gray-300 mx-1"></div>
+                                   <button 
+                                      onClick={() => handleCopyUrl(doc.id, doc.url || '')}
+                                      className="p-1 text-gray-400 hover:text-blue-500 rounded"
+                                      title="Sao chép URL gốc"
+                                   >
+                                      {copiedId === doc.id ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                                   </button>
+                                   <a 
+                                      href={doc.url} 
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="p-1 text-gray-400 hover:text-emerald-500 rounded"
+                                      title="Mở URL gốc trong tab mới (Kiểm tra Link)"
+                                   >
+                                      <Globe className="w-3 h-3" />
+                                   </a>
+                                </div>
+                             )}
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -286,7 +317,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                       <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button 
                              className="p-2 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg"
-                             title="Đã lưu cục bộ"
+                             title="Đã lưu trong cache cục bộ (IndexedDB)"
                         >
                             <Database className="w-4 h-4" />
                         </button>

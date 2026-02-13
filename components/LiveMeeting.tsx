@@ -46,7 +46,9 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [useGoogleViewer, setUseGoogleViewer] = useState(false);
+  
+  // Viewer Type State
+  const [viewerType, setViewerType] = useState<'local-pdf' | 'local-docx' | 'google' | 'microsoft' | 'none'>('none');
   const [isLocalLoaded, setIsLocalLoaded] = useState(false);
 
   // Demo file IDs that are allowed to show mock content
@@ -159,38 +161,18 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     setLoadError(null);
     setDocxContent(null);
     setPdfDoc(null);
-    setUseGoogleViewer(false);
+    setViewerType('none');
     setIsLocalLoaded(false);
 
-    // 1. Try to load from IndexedDB or Memory first (Exact Original File)
+    // 1. Check Local Cache (IndexedDB)
+    // Only attempt local render if we are 100% sure we have the binary data.
     let fileBlob: Blob | null = uploadedFiles[previewDoc.id] || null;
-    
     if (!fileBlob) {
         try {
             fileBlob = await getFileFromLocal(previewDoc.id);
-        } catch (e) {
-            console.error("IndexedDB error", e);
-        }
+        } catch (e) { console.error("DB Error", e); }
     }
 
-    // 2. If not found locally, try to fetch from Supabase and cache it
-    if (!fileBlob && previewDoc.url && !previewDoc.url.startsWith('blob:')) {
-         try {
-             console.log("Fetching from remote to cache:", previewDoc.url);
-             const response = await fetch(previewDoc.url);
-             if (response.ok) {
-                 fileBlob = await response.blob();
-                 // Save for next time
-                 saveFileToLocal(previewDoc.id, fileBlob);
-             } else {
-                 throw new Error("Fetch failed");
-             }
-         } catch (e) {
-             console.warn("Could not fetch/cache remote file. Using Google Viewer fallback.", e);
-         }
-    }
-
-    // 3. Render Logic
     if (fileBlob) {
         setIsLocalLoaded(true);
         const arrayBuffer = await fileBlob.arrayBuffer();
@@ -200,11 +182,10 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                 const result = await mammoth.convertToHtml({ arrayBuffer });
                 if (!result.value) throw new Error("Empty result from conversion");
                 setDocxContent(result.value);
+                setViewerType('local-docx');
                 setIsLoadingPreview(false);
                 return;
-             } catch (e) {
-                console.warn("Mammoth failed", e);
-             }
+             } catch (e) { console.warn("Mammoth failed", e); }
         } else if (previewDoc.type === 'pdf') {
              try {
                 const loadingTask = pdfjs.getDocument({ 
@@ -217,33 +198,40 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                 setPdfTotalPages(pdf.numPages);
                 setPdfPageNum(1);
                 await pdf.getPage(1);
+                setViewerType('local-pdf');
                 setIsLoadingPreview(false);
                 return;
-             } catch (e) {
-                console.warn("PDF load failed", e);
-             }
+             } catch (e) { console.warn("PDF load failed", e); }
         }
-        // If XLS/PPT locally -> Can't render easily in JS, fallback to Google Viewer if URL exists
-        // Or show download prompt
+        // XLS/PPT cannot be rendered locally -> Fallthrough to Remote Viewer
     }
 
-    // 4. Fallback: Google Viewer (for remote URLs we couldn't fetch/render)
+    // 2. Remote URL Strategies
     if (previewDoc.url && !previewDoc.url.startsWith('blob:')) {
-        setUseGoogleViewer(true);
+        // A. Microsoft Office Viewer (Better for Doc, Xls, Ppt)
+        if (['doc', 'xls', 'ppt'].includes(previewDoc.type)) {
+            setViewerType('microsoft');
+            setIsLoadingPreview(false);
+            return;
+        }
+
+        // B. Google Viewer (Standard for PDF fallback)
+        setViewerType('google');
         setIsLoadingPreview(false);
         return;
     }
 
-    // 5. Fallback: Demo Content
+    // 3. Fallback: Demo Content (Only for system demo files)
     if (DEMO_FILE_IDS.includes(previewDoc.id)) {
         await new Promise(r => setTimeout(r, 600)); 
         generateMockContent(previewDoc);
+        setViewerType('local-docx'); // Reuse docx viewer for mock HTML
         setIsLoadingPreview(false);
         return;
     }
 
-    // 6. Final Error
-    setLoadError("Không thể xem trước tài liệu này. Vui lòng tải về máy.");
+    // 4. Final Error
+    setLoadError("Không tìm thấy file. Vui lòng tải về để xem.");
     setIsLoadingPreview(false);
   };
 
@@ -295,8 +283,10 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         }
       } catch (error) { console.error("PDF Render error", error); }
     };
-    renderPage();
-  }, [pdfDoc, pdfPageNum, pdfScale]);
+    if (viewerType === 'local-pdf') {
+        renderPage();
+    }
+  }, [pdfDoc, pdfPageNum, pdfScale, viewerType]);
 
   const changePdfPage = (delta: number) => {
     if (!pdfDoc) return;
@@ -330,7 +320,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
       return (
          <div className="flex flex-col items-center justify-center h-full text-slate-500">
            <Loader2 className="w-10 h-10 animate-spin mb-3 text-emerald-500" />
-           <p>Đang xử lý tài liệu...</p>
+           <p>Đang tải tài liệu...</p>
         </div>
       );
     }
@@ -356,24 +346,44 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
        );
     }
 
-    // 1. Google Viewer for Remote Files (Fallback or Office files)
-    if (useGoogleViewer && previewDoc.url) {
+    // --- RENDER BASED ON VIEWER TYPE ---
+
+    // 1. Microsoft Office Viewer (Doc/Xls/Ppt)
+    if (viewerType === 'microsoft' && previewDoc.url) {
         return (
             <div className="w-full h-full bg-white relative flex flex-col">
                 <iframe 
-                    src={`https://docs.google.com/viewer?url=${encodeURIComponent(previewDoc.url)}&embedded=true`}
+                    src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(previewDoc.url)}`}
                     className="w-full h-full border-none flex-1"
-                    title="Document Preview"
+                    title="Office Document Preview"
                 ></iframe>
-                <div className="absolute bottom-4 right-4 bg-white/90 px-3 py-1 rounded text-xs text-slate-500 shadow border border-slate-200 pointer-events-none z-10">
-                    Powered by Google Viewer
+                <div className="absolute bottom-4 right-4 bg-white/90 px-3 py-1 rounded text-xs text-slate-500 shadow border border-slate-200 pointer-events-none z-10 flex items-center gap-2">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/5/5f/Microsoft_Office_logo_%282019%E2%80%93present%29.svg" className="w-4 h-4" alt="MS Office" />
+                    <span>Office Viewer</span>
                 </div>
             </div>
         );
     }
 
-    // 2. PDF Viewer (Local Client-Side)
-    if (previewDoc.type === 'pdf' && pdfDoc) {
+    // 2. Google Viewer (PDF / Generic)
+    if (viewerType === 'google' && previewDoc.url) {
+        return (
+            <div className="w-full h-full bg-white relative flex flex-col">
+                <iframe 
+                    src={`https://docs.google.com/viewer?url=${encodeURIComponent(previewDoc.url)}&embedded=true`}
+                    className="w-full h-full border-none flex-1"
+                    title="Google Document Preview"
+                ></iframe>
+                <div className="absolute bottom-4 right-4 bg-white/90 px-3 py-1 rounded text-xs text-slate-500 shadow border border-slate-200 pointer-events-none z-10 flex items-center gap-2">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" className="w-4 h-4" alt="Google" />
+                    <span>Google Viewer</span>
+                </div>
+            </div>
+        );
+    }
+
+    // 3. Local PDF Viewer
+    if (viewerType === 'local-pdf' && pdfDoc) {
         return (
           <div className="flex flex-col h-full w-full bg-slate-900 rounded-none overflow-hidden relative shadow-2xl">
              <div className="h-12 bg-white border-b border-gray-200 flex items-center justify-center gap-4 px-4 shadow-sm z-10 shrink-0 select-none">
@@ -401,15 +411,14 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         );
     }
 
-    // 3. Local Docx Preview (Mammoth)
-    if (docxContent) {
+    // 4. Local Docx Preview (Mammoth)
+    if (viewerType === 'local-docx' && docxContent) {
         return (
           <div className="bg-white text-slate-900 w-full h-full shadow-none overflow-y-auto px-8 py-8">
-             {/* Local Preview Warning */}
              {previewDoc.type === 'doc' && !previewDoc.url && (
                  <div className="max-w-4xl mx-auto mb-6 bg-orange-50 border border-orange-200 p-3 rounded-lg flex items-center gap-3 text-orange-800 text-sm">
                     <AlertTriangle className="w-4 h-4" />
-                    <span>Đang xem bản xem trước cục bộ (giản lược). Định dạng có thể không chuẩn 100%.</span>
+                    <span>Đang xem bản xem trước cục bộ (giản lược).</span>
                  </div>
              )}
              
@@ -605,7 +614,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                <div className="flex items-center gap-3 text-white overflow-hidden">
                   <div className="p-1.5 bg-emerald-500/20 rounded-lg">{getDocIcon(previewDoc.type)}</div>
                   <span className="font-bold truncate text-slate-100">{previewDoc.name}</span>
-                  {useGoogleViewer && !isLocalLoaded && <span className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded border border-blue-500/30">HQ Preview</span>}
+                  {(viewerType === 'google' || viewerType === 'microsoft') && !isLocalLoaded && <span className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded border border-blue-500/30">HQ Remote</span>}
                   {isLocalLoaded && <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30 flex items-center gap-1"><Database className="w-3 h-3"/> Local DB</span>}
                </div>
                <div className="flex items-center gap-4 shrink-0">
