@@ -11,6 +11,7 @@ import { TopBanner } from './components/TopBanner';
 import { BottomBanner } from './components/BottomBanner';
 import { Meeting, Room, Document, User } from './types';
 import { supabase } from './supabaseClient';
+import { saveFileToLocal, getFileFromLocal } from './utils/indexedDB';
 import { 
   USERS as DEFAULT_USERS, 
   ROOMS as DEFAULT_ROOMS, 
@@ -139,9 +140,30 @@ const App: React.FC = () => {
     // --- REALTIME SUBSCRIPTIONS ---
     const documentsSubscription = supabase
       .channel('public:documents')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'documents' }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'documents' }, async (payload) => {
         if (payload.eventType === 'INSERT') {
-          setDocuments((prev) => [payload.new as Document, ...prev]);
+          const newDoc = payload.new as Document;
+          setDocuments((prev) => [newDoc, ...prev]);
+
+          // NEW: If a new doc comes in, try to download and cache it immediately
+          // This allows users who are online to have the "original file" for preview
+          if (newDoc.url && !newDoc.url.startsWith('blob:')) {
+             try {
+                // Check if we already have it (e.g. we are the uploader)
+                const existing = await getFileFromLocal(newDoc.id);
+                if (!existing) {
+                    console.log(`[Auto-Cache] Downloading new document: ${newDoc.name}`);
+                    const response = await fetch(newDoc.url);
+                    if (response.ok) {
+                        const blob = await response.blob();
+                        await saveFileToLocal(newDoc.id, blob);
+                    }
+                }
+             } catch (e) {
+                 console.warn("Auto-cache failed for doc:", newDoc.id, e);
+             }
+          }
+
         } else if (payload.eventType === 'DELETE') {
           setDocuments((prev) => prev.filter((doc) => doc.id !== payload.old.id));
         } else if (payload.eventType === 'UPDATE') {
@@ -223,9 +245,6 @@ const App: React.FC = () => {
   // NEW: Update document handler
   const handleUpdateDocument = async (updatedDoc: Document) => {
     setDocuments(prev => prev.map(d => d.id === updatedDoc.id ? updatedDoc : d));
-    // Important: Supabase uses snake_case by default, but we use camelCase in TS.
-    // Ensure table columns are created with quotes "updatedAt" or map them here.
-    // Based on provided SQL, we are using quoted identifiers.
     const { error } = await supabase.from('documents').update(updatedDoc).eq('id', updatedDoc.id);
     if (error) console.error('Error updating document:', error);
   };

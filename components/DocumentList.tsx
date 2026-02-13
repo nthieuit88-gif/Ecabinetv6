@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FileText, FileSpreadsheet, FileIcon, Download, Trash2, Search, UploadCloud, Filter, Loader2, Edit, AlertCircle } from 'lucide-react';
+import { FileText, FileSpreadsheet, FileIcon, Download, Trash2, Search, UploadCloud, Filter, Loader2, Edit, AlertCircle, Database } from 'lucide-react';
 import { getUserById } from '../data';
 import { Document, User } from '../types';
 import { supabase } from '../supabaseClient';
+import { saveFileToLocal, deleteFileFromLocal } from '../utils/indexedDB';
 
 interface DocumentListProps {
   currentUser: User;
@@ -41,13 +42,9 @@ const getFileType = (fileName: string): Document['type'] => {
   return 'other';
 };
 
-// Helper function to remove Vietnamese accents and special characters
 const sanitizeFileName = (fileName: string): string => {
-  // 1. Remove accents
   let str = fileName.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  // 2. Replace spaces with underscores
   str = str.replace(/\s+/g, '_');
-  // 3. Remove non-alphanumeric chars except dots and underscores
   str = str.replace(/[^a-zA-Z0-9._-]/g, '');
   return str;
 };
@@ -67,7 +64,6 @@ export const DocumentList: React.FC<DocumentListProps> = ({
   const [uploadWarning, setUploadWarning] = useState<string | null>(null);
 
   useEffect(() => {
-    // Only allow auto-open if admin
     if (pendingAction === 'upload' && isAdmin) {
       if (fileInputRef.current) {
          try {
@@ -91,7 +87,6 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     if (newName === null || newName.trim() === "") return;
     if (newName === doc.name) return;
 
-    // Optimistic UI Update handled by onUpdateDocument
     const updatedDoc = { ...doc, name: newName };
     onUpdateDocument(updatedDoc);
   };
@@ -109,7 +104,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
         const filePath = `${Date.now()}_${cleanName}`;
         let publicUrl = '';
         
-        // 1. Attempt Upload to Supabase Storage
+        // 1. Upload to Supabase
         const { data: uploadData, error: uploadError } = await supabase.storage
             .from('documents')
             .upload(filePath, file, {
@@ -119,12 +114,9 @@ export const DocumentList: React.FC<DocumentListProps> = ({
 
         if (uploadError) {
             console.warn('Supabase Storage upload failed. Using Local Fallback.', uploadError.message);
-            setUploadWarning(`Cảnh báo: Không thể lưu file lên server (Lỗi: ${uploadError.message}). File sẽ chỉ xem được trong phiên làm việc này.`);
-            // --- FALLBACK STRATEGY ---
-            // If storage fails (permission denied), create a local blob URL so the app still works temporarily!
+            setUploadWarning(`Cảnh báo: Không thể lưu file lên server. File sẽ chỉ được lưu trong bộ nhớ máy này.`);
             publicUrl = URL.createObjectURL(file);
         } else {
-            // 2. Get Public URL if upload succeeded
             const storagePath = uploadData?.path || filePath;
             const { data: publicUrlData } = supabase.storage
                 .from('documents')
@@ -132,9 +124,10 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             publicUrl = publicUrlData.publicUrl;
         }
 
-        // 3. Create Document Record
+        // 2. Create Doc Record
+        const newDocId = Date.now().toString();
         const newDoc: Document = {
-            id: Date.now().toString(),
+            id: newDocId,
             name: originalName,
             type: getFileType(originalName),
             size: formatFileSize(file.size),
@@ -143,7 +136,10 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             url: publicUrl
         };
 
-        // Syncs to DB via App.tsx
+        // 3. IMPORTANT: Save to IndexedDB immediately for this user (Admin)
+        // This ensures the uploader can preview it perfectly without re-downloading
+        await saveFileToLocal(newDocId, file);
+
         onAddDocument(newDoc);
         
         if (fileInputRef.current) {
@@ -163,31 +159,20 @@ export const DocumentList: React.FC<DocumentListProps> = ({
       return;
     }
 
-    // 1. Delete from Storage if URL exists and is NOT a blob (local demo)
-    if (docUrl) {
-      if (docUrl.startsWith('blob:')) {
-         // Revoke local URL to free memory
-         URL.revokeObjectURL(docUrl);
-      } else {
+    // 1. Delete from Remote Storage
+    if (docUrl && !docUrl.startsWith('blob:')) {
          try {
            const urlParts = docUrl.split('/documents/');
            if (urlParts.length > 1) {
               const filePath = decodeURIComponent(urlParts[1]);
-              const { error: storageError } = await supabase.storage
-                .from('documents')
-                .remove([filePath]);
-                
-              if (storageError) {
-                console.warn('Note: Could not delete actual file from storage (likely permission issue).', storageError);
-              }
+              await supabase.storage.from('documents').remove([filePath]);
            }
-         } catch (e) {
-           console.error("Error parsing URL for storage deletion:", e);
-         }
-      }
+         } catch (e) { console.error("Error parsing URL", e); }
     }
     
-    // Call parent to update state and DB
+    // 2. Delete from Local IndexedDB
+    await deleteFileFromLocal(id);
+
     onDeleteDocument(id); 
   };
 
@@ -238,7 +223,6 @@ export const DocumentList: React.FC<DocumentListProps> = ({
       )}
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col">
-        {/* Toolbar */}
         <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row gap-4 justify-between items-center">
             <div className="relative w-full md:w-96">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -253,7 +237,6 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             </button>
         </div>
 
-        {/* Table */}
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
@@ -278,15 +261,12 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                              <a 
-                                href={doc.url} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className={`font-medium text-sm cursor-pointer block ${isLocal ? 'text-orange-600' : 'text-gray-800 hover:text-emerald-600'}`}
+                              <span 
+                                className={`font-medium text-sm block text-gray-800`}
                               >
                                 {doc.name}
-                              </a>
-                              {isLocal && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded border border-orange-200 font-bold" title="File này chưa được lưu lên Server">Local Only</span>}
+                              </span>
+                              {isLocal && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded border border-orange-200 font-bold" title="File này chưa được lưu lên Server">Unsynced</span>}
                           </div>
                           <p className="text-xs text-gray-400 uppercase mt-0.5">{doc.type}</p>
                         </div>
@@ -304,12 +284,18 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button 
+                             className="p-2 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg"
+                             title="Đã lưu cục bộ"
+                        >
+                            <Database className="w-4 h-4" />
+                        </button>
                         {doc.url && (
                           <a 
                             href={doc.url} 
                             target="_blank"
                             download={doc.name}
-                            className="p-2 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg flex items-center justify-center" 
+                            className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg flex items-center justify-center" 
                             title="Tải xuống"
                           >
                             <Download className="w-4 h-4" />
