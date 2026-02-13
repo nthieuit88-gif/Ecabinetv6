@@ -217,7 +217,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         await new Promise(r => setTimeout(r, 800)); // Simulate loading delay
         
         let demoContent = '';
-        if (previewDoc.type === 'doc' || previewDoc.type === 'docx') {
+        if (previewDoc.type === 'doc') {
            demoContent = `
              <div class="prose prose-slate max-w-none">
                 <h1 style="color: #047857; margin-bottom: 0.5em;">${previewDoc.name}</h1>
@@ -241,7 +241,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
            setDocxContent(demoContent);
            setIsLoadingPreview(false);
            return;
-        } else if (previewDoc.type === 'xls' || previewDoc.type === 'xlsx') {
+        } else if (previewDoc.type === 'xls') {
             // Mock Excel View
             setDocxContent(`
                <div class="overflow-x-auto">
@@ -268,7 +268,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
             `);
             setIsLoadingPreview(false);
             return;
-        } else if (previewDoc.type === 'ppt' || previewDoc.type === 'pptx') {
+        } else if (previewDoc.type === 'ppt') {
              // Mock PPT View
              setDocxContent(`
                 <div class="flex flex-col items-center justify-center h-full bg-gray-100 p-8 rounded-xl border border-gray-200">

@@ -1,16 +1,13 @@
--- SCRIPT CẤU HÌNH STORAGE CHO ECABINET (SAFE MODE)
--- Script này sử dụng khối lệnh DO $$ để kiểm tra tồn tại trước khi tạo,
--- tránh lỗi "42501: must be owner of table objects" khi cố gắng DROP policy cũ.
+-- SCRIPT CẤU HÌNH STORAGE (FIXED ERROR 42501)
+-- Lệnh 'ALTER TABLE' đã bị loại bỏ vì yêu cầu quyền owner (gây lỗi 42501).
+-- Script này chỉ tạo Bucket và Policy nếu chưa tồn tại, an toàn để chạy nhiều lần.
 
--- 1. Kích hoạt RLS (Thường đã bật sẵn, chạy lại để chắc chắn)
-ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
-
--- 2. Tạo Bucket 'documents' (Nếu chưa có thì tạo, có rồi thì set public)
+-- 1. Tạo Bucket 'documents' (Nếu chưa có)
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('documents', 'documents', true)
 ON CONFLICT (id) DO UPDATE SET public = true;
 
--- 3. Tạo Policy: Cho phép xem file (Public Read)
+-- 2. Tạo Policy: Xem file (Public Read - Ai cũng xem được nếu có link)
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -23,7 +20,7 @@ BEGIN
     END IF;
 END $$;
 
--- 4. Tạo Policy: Cho phép Upload file (Chỉ user đã đăng nhập)
+-- 3. Tạo Policy: Upload file (Chỉ user đã đăng nhập)
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -36,7 +33,7 @@ BEGIN
     END IF;
 END $$;
 
--- 5. Tạo Policy: Cho phép Xóa file (Chỉ user đã đăng nhập)
+-- 4. Tạo Policy: Xóa file (Chỉ user đã đăng nhập)
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -49,7 +46,7 @@ BEGIN
     END IF;
 END $$;
 
--- 6. (Tùy chọn) Policy: Cho phép Update/Sửa file
+-- 5. Tạo Policy: Sửa file (Chỉ user đã đăng nhập)
 DO $$
 BEGIN
     IF NOT EXISTS (
