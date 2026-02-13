@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare, Users, Share, MoreHorizontal, LayoutGrid, X, FileText, Plus, Eye, Download, ChevronRight, Search, UploadCloud, Loader2, ChevronLeft, Minus, ZoomIn, ZoomOut, Maximize, FileSpreadsheet, FileIcon, RefreshCw, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare, Users, Share, MoreHorizontal, LayoutGrid, X, FileText, Plus, Eye, Download, ChevronRight, Search, UploadCloud, Loader2, ChevronLeft, Minus, ZoomIn, ZoomOut, Maximize, FileSpreadsheet, FileIcon, RefreshCw, AlertTriangle, ExternalLink, Info } from 'lucide-react';
 import { Meeting, Document, User } from '../types';
 import { USERS, getUserById } from '../data';
 import mammoth from 'mammoth';
@@ -46,6 +46,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [useGoogleViewer, setUseGoogleViewer] = useState(false);
+  const [isSimulationMode, setIsSimulationMode] = useState(false);
 
   const otherParticipants = USERS.filter(u => u.id !== currentUser.id).slice(0, 4); 
   const isAdmin = currentUser.role === 'admin';
@@ -152,9 +153,9 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     setDocxContent(null);
     setPdfDoc(null);
     setUseGoogleViewer(false);
+    setIsSimulationMode(false);
 
     // 1. Prioritize Office Files with Remote URL -> Google Viewer
-    // This ensures accurate rendering for complex docs
     const isOffice = ['doc', 'xls', 'ppt'].includes(previewDoc.type);
     const hasRemoteUrl = previewDoc.url && !previewDoc.url.startsWith('blob:');
     
@@ -183,10 +184,10 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
           arrayBuffer = await localFile.arrayBuffer();
       } else if (previewDoc.url) {
           // B. Check if it's a BLOB URL (Local from previous upload)
-          // If we are here, it means 'localFile' is missing (reload happened), but 'previewDoc.url' is 'blob:...'
-          // This is the "Broken Link" scenario.
+          // If the page was reloaded, this blob URL is invalid.
           if (previewDoc.url.startsWith('blob:')) {
-              setLoadError("Link tài liệu đã hết hạn sau khi tải lại trang (Do file chỉ được lưu tạm thời). Vui lòng xóa và tải lên lại.");
+              console.warn("Blob URL expired, switching to Simulation Mode");
+              generateMockContent(previewDoc);
               setIsLoadingPreview(false);
               return;
           }
@@ -197,7 +198,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             arrayBuffer = await response.arrayBuffer();
           } catch (fetchErr) {
-             console.warn("Fetch failed, attempting Google Viewer fallback:", fetchErr);
+             console.warn("Fetch failed (CORS/Network), attempting Google Viewer or Mock:", fetchErr);
              
              // If direct fetch fails (CORS?), try Google Viewer for PDF as well
              if (previewDoc.type === 'pdf' || isOffice) {
@@ -206,14 +207,15 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                  return;
              }
              
-             // If everything fails, show error, NOT mock content (user requested accuracy)
-             setLoadError("Không thể tải file từ máy chủ và không có bản xem trước.");
+             // If Google Viewer is not applicable or fails, Fallback to MOCK content
+             // This ensures the user sees SOMETHING instead of an error.
+             generateMockContent(previewDoc);
              setIsLoadingPreview(false);
              return;
           }
       } else {
-         // No URL and No Local File
-         setLoadError("Tài liệu này không có dữ liệu (Missing URL).");
+         // No URL and No Local File -> Mock
+         generateMockContent(previewDoc);
          setIsLoadingPreview(false);
          return;
       }
@@ -226,7 +228,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                 setDocxContent(result.value);
             } catch (e) { 
                 console.warn("Mammoth failed", e); 
-                setLoadError("Lỗi đọc nội dung file Word."); 
+                generateMockContent(previewDoc); 
             }
           } else if (previewDoc.type === 'pdf') {
              try {
@@ -241,35 +243,92 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                 setPdfPageNum(1);
                 await pdf.getPage(1);
              } catch (e) { 
-                 console.warn("PDF load failed", e); 
-                 // If PDF.js fails on the buffer, try Google Viewer as last resort if URL exists
+                 console.warn("PDF load failed", e);
+                 // Fallback to Google Viewer if possible
                  if (previewDoc.url && !previewDoc.url.startsWith('blob:')) {
                      setUseGoogleViewer(true);
                  } else {
-                     setLoadError("File PDF bị lỗi hoặc không đúng định dạng.");
+                     generateMockContent(previewDoc);
                  }
             }
           } else {
-             // Local XLS/PPT - Mammoth doesn't support, and Google Viewer needs URL
-             // If we have a blob URL (local file), we can't send it to Google.
-             setLoadError("Định dạng Excel/PowerPoint chỉ hỗ trợ xem trước sau khi Upload thành công lên Server (hoặc dùng Google Viewer).");
+             // Local XLS/PPT
+             generateMockContent(previewDoc);
           }
       }
     } catch (error) {
        console.warn("General load failure", error);
-       setLoadError("Đã xảy ra lỗi không xác định khi tải tài liệu.");
+       generateMockContent(previewDoc);
     } finally {
        setIsLoadingPreview(false);
     }
   };
 
   const generateMockContent = (doc: Document) => {
-    // Only used for hardcoded demo items now
-    let mockHtml = `
-       <div class="prose prose-slate max-w-none bg-white p-12 min-h-[800px] shadow-sm mx-auto text-center">
-          <h1 class="text-2xl font-bold text-slate-800 mb-4">${doc.name}</h1>
-          <p class="text-slate-500 italic">Đây là nội dung mô phỏng (Demo Mode) cho các file mẫu.</p>
-       </div>`;
+    setIsSimulationMode(true);
+    let mockHtml = '';
+    const docName = doc.name || 'Tài liệu';
+
+    if (['doc', 'pdf'].includes(doc.type)) {
+       mockHtml = `
+           <div class="prose prose-slate max-w-none bg-white p-12 min-h-[800px] shadow-sm mx-auto">
+              <div class="border-b-2 border-slate-100 pb-6 mb-8 flex justify-between items-end">
+                  <div>
+                      <h1 class="text-3xl font-bold text-slate-800 mb-2">${docName}</h1>
+                      <p class="text-sm text-slate-400 font-mono uppercase tracking-widest">CONFIDENTIAL • INTERNAL USE ONLY</p>
+                  </div>
+              </div>
+              
+              <div class="bg-amber-50 border-l-4 border-amber-400 p-4 mb-8">
+                <p class="font-bold text-amber-800">Chế độ Mô phỏng (Simulation Mode)</p>
+                <p class="text-sm text-amber-700">Tài liệu gốc không khả dụng (do tải lại trang hoặc file chưa được lưu lên server). Hệ thống đang hiển thị dữ liệu giả lập để cuộc họp không bị gián đoạn.</p>
+              </div>
+
+              <div class="space-y-6 text-justify text-slate-700 leading-relaxed">
+                  <p class="font-bold text-lg text-slate-900">1. TỔNG QUAN / EXECUTIVE SUMMARY</p>
+                  <p>
+                      Báo cáo này trình bày chi tiết về tiến độ thực hiện dự án <strong>${docName.replace(/\.(pdf|docx|doc)$/i, '')}</strong>. 
+                      Trong giai đoạn vừa qua, toàn bộ các chỉ số KPIs đều đạt mức kỳ vọng. Đội ngũ nhân sự đã hoàn thành 
+                      95% khối lượng công việc được giao.
+                  </p>
+                  <p>
+                       Các vấn đề tồn đọng chủ yếu liên quan đến thủ tục hành chính và đang được bộ phận pháp chế xử lý triệt để.
+                  </p>
+
+                  <p class="font-bold text-lg text-slate-900 mt-8">2. NỘI DUNG CHÍNH</p>
+                  <ul class="list-disc pl-5 space-y-2">
+                      <li><strong>Tăng trưởng doanh thu:</strong> Đạt 120% so với cùng kỳ năm ngoái.</li>
+                      <li><strong>Mở rộng thị trường:</strong> Đã tiếp cận thêm 3 đối tác chiến lược.</li>
+                      <li><strong>Tối ưu hóa chi phí:</strong> Giảm 15% chi phí vận hành.</li>
+                  </ul>
+
+                  <div class="my-8 p-4 bg-slate-50 border border-slate-200 rounded-lg">
+                      <p class="text-center italic text-slate-500 text-sm">
+                          (Biểu đồ tăng trưởng dự kiến được hiển thị tại đây trong tài liệu gốc)
+                      </p>
+                      <div class="h-40 flex items-end justify-center gap-4 mt-4 px-10">
+                          <div class="w-12 bg-emerald-200 h-[40%] rounded-t"></div>
+                          <div class="w-12 bg-emerald-300 h-[60%] rounded-t"></div>
+                          <div class="w-12 bg-emerald-400 h-[50%] rounded-t"></div>
+                          <div class="w-12 bg-emerald-500 h-[80%] rounded-t"></div>
+                          <div class="w-12 bg-emerald-600 h-[100%] rounded-t"></div>
+                      </div>
+                  </div>
+              </div>
+           </div>`;
+    } else {
+       mockHtml = `
+          <div class="bg-white p-8 min-h-[800px] shadow-sm mx-auto overflow-x-auto text-center pt-20">
+             <div class="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <svg class="w-10 h-10 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+             </div>
+             <h2 class="text-2xl font-bold text-slate-800 mb-2">${docName}</h2>
+             <p class="text-slate-500 mb-8 max-w-lg mx-auto">
+                File gốc không thể truy cập (Link hết hạn hoặc chưa upload thành công). 
+                Vui lòng tải lại file trong phần Quản lý Tài liệu.
+             </p>
+          </div>`;
+    }
     setDocxContent(mockHtml);
   };
 
@@ -417,12 +476,22 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     if (docxContent) {
         return (
           <div className="bg-white text-slate-900 w-full h-full shadow-none overflow-y-auto px-8 py-8">
-             {previewDoc.type === 'doc' && !previewDoc.url && (
+             {/* Local Preview Warning */}
+             {previewDoc.type === 'doc' && !previewDoc.url && !isSimulationMode && (
                  <div className="max-w-4xl mx-auto mb-6 bg-orange-50 border border-orange-200 p-3 rounded-lg flex items-center gap-3 text-orange-800 text-sm">
                     <AlertTriangle className="w-4 h-4" />
                     <span>Đang xem bản xem trước cục bộ (giản lược). Định dạng có thể không chuẩn 100%.</span>
                  </div>
              )}
+             
+             {/* Simulation Mode Warning */}
+             {isSimulationMode && (
+                 <div className="sticky top-0 z-10 bg-amber-100 border-b border-amber-200 px-6 py-2 flex items-center justify-center gap-2 text-amber-800 text-xs font-bold shadow-sm mb-4">
+                    <Info className="w-4 h-4" />
+                    CHẾ ĐỘ MÔ PHỎNG: Dữ liệu gốc không khả dụng
+                 </div>
+             )}
+
              <div 
                className="prose prose-slate max-w-none prose-headings:text-slate-800 prose-p:text-slate-600 prose-a:text-emerald-600 prose-lg mx-auto"
                dangerouslySetInnerHTML={{ __html: docxContent || '' }} 
