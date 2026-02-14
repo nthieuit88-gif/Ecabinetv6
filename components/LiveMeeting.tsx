@@ -78,6 +78,22 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     };
   }, []);
 
+  // --- Keyboard Navigation for PDF ---
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!previewDoc || viewerType !== 'local-pdf') return;
+      
+      if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        changePdfPage(-1);
+      } else if (e.key === 'ArrowRight' || e.key === 'PageDown') {
+        changePdfPage(1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewDoc, viewerType, pdfPageNum, pdfTotalPages]);
+
   const toggleSidebar = (type: 'chat' | 'docs') => {
     setActiveSidebar(activeSidebar === type ? null : type);
   };
@@ -457,10 +473,35 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
              </div>
              <div className="flex-1 relative bg-slate-900 overflow-hidden">
                 <div ref={containerRef} className="w-full h-full overflow-auto flex justify-center p-8">
-                    <div className="bg-white shadow-2xl">
+                    <div className="bg-white shadow-2xl transition-transform duration-200">
                         <canvas ref={canvasRef} style={{ display: 'block' }} />
                     </div>
                 </div>
+
+                {/* --- NAVIGATION OVERLAY BUTTONS (PREV / NEXT) --- */}
+                <div className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
+                   {pdfPageNum > 1 && (
+                     <button
+                       onClick={() => changePdfPage(-1)}
+                       className="pointer-events-auto p-3 rounded-full bg-black/40 hover:bg-emerald-600/90 text-white/70 hover:text-white backdrop-blur-sm transition-all shadow-lg hover:scale-110 group"
+                       title="Trang trước (Phím mũi tên trái)"
+                     >
+                       <ChevronLeft className="w-8 h-8 group-hover:drop-shadow-md" />
+                     </button>
+                   )}
+                </div>
+                <div className="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none">
+                   {pdfPageNum < pdfTotalPages && (
+                     <button
+                       onClick={() => changePdfPage(1)}
+                       className="pointer-events-auto p-3 rounded-full bg-black/40 hover:bg-emerald-600/90 text-white/70 hover:text-white backdrop-blur-sm transition-all shadow-lg hover:scale-110 group"
+                       title="Trang sau (Phím mũi tên phải)"
+                     >
+                       <ChevronRight className="w-8 h-8 group-hover:drop-shadow-md" />
+                     </button>
+                   )}
+                </div>
+
              </div>
           </div>
         );
