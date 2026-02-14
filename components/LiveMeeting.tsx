@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare, Users, Share, MoreHorizontal, LayoutGrid, X, FileText, Plus, Eye, Download, ChevronRight, Search, UploadCloud, Loader2, ChevronLeft, Minus, ZoomIn, ZoomOut, Maximize, FileSpreadsheet, FileIcon, RefreshCw, AlertTriangle, ExternalLink, Info, Database } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare, Users, Share, MoreHorizontal, LayoutGrid, X, FileText, Plus, Eye, Download, ChevronRight, Search, UploadCloud, Loader2, ChevronLeft, Minus, ZoomIn, ZoomOut, Maximize, FileSpreadsheet, FileIcon, RefreshCw, AlertTriangle, ExternalLink, Info, Database, Globe } from 'lucide-react';
 import { Meeting, Document, User } from '../types';
 import { USERS, getUserById } from '../data';
 import mammoth from 'mammoth';
@@ -165,6 +165,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     setIsLocalLoaded(false);
 
     // 1. Check Local Cache (IndexedDB)
+    // Only attempt local render if we are 100% sure we have the binary data (Blob).
     let fileBlob: Blob | null = uploadedFiles[previewDoc.id] || null;
     
     if (!fileBlob) {
@@ -173,26 +174,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         } catch (e) { console.error("DB Error", e); }
     }
 
-    // 2. FETCH FROM SUPABASE IF MISSING (The Fix)
-    // If not in local DB, try to download and cache it now.
-    if (!fileBlob && previewDoc.url && !previewDoc.url.startsWith('blob:')) {
-        try {
-            console.log(`[Preview] Downloading file from Supabase: ${previewDoc.url}`);
-            const response = await fetch(previewDoc.url);
-            if (response.ok) {
-                fileBlob = await response.blob();
-                // Save to local IndexedDB for next time (Instant load)
-                await saveFileToLocal(previewDoc.id, fileBlob);
-                console.log("[Preview] Download success & cached.");
-            } else {
-                console.warn("[Preview] Download failed with status:", response.status);
-            }
-        } catch (err) {
-             console.warn("[Preview] Download error (CORS/Network), fallback to viewers.", err);
-        }
-    }
-
-    // 3. Render Local Content (If Blob exists)
+    // 2. Render Local Content (If Blob exists in Cache)
     if (fileBlob) {
         setIsLocalLoaded(true);
         const arrayBuffer = await fileBlob.arrayBuffer();
@@ -223,15 +205,16 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                 return;
              } catch (e) { console.warn("PDF load failed", e); }
         }
-        // If XLS/PPT and we have Blob, we can't easily render locally in JS.
-        // We will fall through to Remote Viewers.
+        // If XLS/PPT is found locally, we fall through to remote viewer 
+        // because we don't have a good local XLS/PPT renderer in React without heavy libs.
     }
 
-    // 4. Remote URL Fallback (Microsoft / Google Viewers)
-    // Used if: 
-    // a) File type is Office (XLS/PPT) even if we have Blob
-    // b) Fetch failed (CORS) but URL might be accessible via iframe
+    // 3. Remote URL Strategy (The Fix for Cross-IP/CORS)
+    // Instead of trying to 'fetch' and getting blocked by CORS,
+    // we directly assign the URL to Google/Microsoft Viewers (iframe).
     if (previewDoc.url && !previewDoc.url.startsWith('blob:')) {
+        
+        console.log(`[Preview] Using Remote Viewer for: ${previewDoc.name}`);
         
         // Strategy A: Microsoft Office Viewer (Best for Office Files)
         if (['doc', 'xls', 'ppt'].includes(previewDoc.type)) {
@@ -240,13 +223,23 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
             return;
         }
 
-        // Strategy B: Google Viewer (Best for PDF and fallback)
+        // Strategy B: Google Viewer (Best for PDF and Fallback)
         setViewerType('google');
         setIsLoadingPreview(false);
+        
+        // Optional: Attempt to fetch in background to cache for NEXT time (Silent, non-blocking)
+        fetch(previewDoc.url)
+            .then(res => {
+                if(res.ok) return res.blob();
+                throw new Error("Fetch failed");
+            })
+            .then(blob => saveFileToLocal(previewDoc.id, blob))
+            .catch(() => console.log("Background cache attempt skipped (likely CORS). Viewer will handle it."));
+
         return;
     }
 
-    // 5. Fallback: Demo Content (Only for system demo files)
+    // 4. Fallback: Demo Content (Only for system demo files with no URL)
     if (DEMO_FILE_IDS.includes(previewDoc.id)) {
         await new Promise(r => setTimeout(r, 600)); 
         generateMockContent(previewDoc);
@@ -255,8 +248,8 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         return;
     }
 
-    // 6. Final Error
-    setLoadError("Không thể tải bản xem trước. Vui lòng tải về máy.");
+    // 5. Final Error
+    setLoadError("Không tìm thấy nội dung file. Vui lòng tải về để xem.");
     setIsLoadingPreview(false);
   };
 
@@ -345,7 +338,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
       return (
          <div className="flex flex-col items-center justify-center h-full text-slate-500">
            <Loader2 className="w-10 h-10 animate-spin mb-3 text-emerald-500" />
-           <p>Đang tải và xử lý tài liệu...</p>
+           <p>Đang tải tài liệu...</p>
         </div>
       );
     }
@@ -356,16 +349,27 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
              <div className="bg-red-500/10 p-4 rounded-full mb-4">
                 <AlertTriangle className="w-10 h-10 text-red-500" />
              </div>
-             <h3 className="text-xl font-bold text-white mb-2">Không thể xem trước</h3>
+             <h3 className="text-xl font-bold text-white mb-2">Không thể hiển thị</h3>
              <p className="text-slate-400 mb-6 leading-relaxed max-w-md">{loadError}</p>
              {previewDoc.url && (
-                <a 
-                   href={previewDoc.url} 
-                   target="_blank" 
-                   className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg inline-flex items-center gap-2 font-medium transition-colors"
-                >
-                   <Download className="w-4 h-4" /> Tải về máy để xem
-                </a>
+                <div className="flex gap-3">
+                    <a 
+                    href={previewDoc.url} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg inline-flex items-center gap-2 font-medium transition-colors"
+                    >
+                    <Globe className="w-4 h-4" /> Mở trong trình duyệt
+                    </a>
+                    <a 
+                    href={previewDoc.url} 
+                    download
+                    target="_blank" 
+                    className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg inline-flex items-center gap-2 font-medium transition-colors"
+                    >
+                    <Download className="w-4 h-4" /> Tải về máy
+                    </a>
+                </div>
              )}
           </div>
        );
@@ -374,6 +378,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     // --- RENDER BASED ON VIEWER TYPE ---
 
     // 1. Microsoft Office Viewer (Doc/Xls/Ppt)
+    // Note: We use encodeURIComponent to handle filenames with spaces or special chars
     if (viewerType === 'microsoft' && previewDoc.url) {
         return (
             <div className="w-full h-full bg-white relative flex flex-col">
@@ -381,10 +386,11 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                     src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(previewDoc.url)}`}
                     className="w-full h-full border-none flex-1"
                     title="Office Document Preview"
+                    onError={() => setLoadError("Không thể kết nối tới Office Viewer.")}
                 ></iframe>
                 <div className="absolute bottom-4 right-4 bg-white/90 px-3 py-1 rounded text-xs text-slate-500 shadow border border-slate-200 pointer-events-none z-10 flex items-center gap-2">
                     <img src="https://upload.wikimedia.org/wikipedia/commons/5/5f/Microsoft_Office_logo_%282019%E2%80%93present%29.svg" className="w-4 h-4" alt="MS Office" />
-                    <span>Office Viewer</span>
+                    <span>Office Viewer (Remote)</span>
                 </div>
             </div>
         );
@@ -398,10 +404,11 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                     src={`https://docs.google.com/viewer?url=${encodeURIComponent(previewDoc.url)}&embedded=true`}
                     className="w-full h-full border-none flex-1"
                     title="Google Document Preview"
+                    onError={() => setLoadError("Không thể kết nối tới Google Viewer.")}
                 ></iframe>
                 <div className="absolute bottom-4 right-4 bg-white/90 px-3 py-1 rounded text-xs text-slate-500 shadow border border-slate-200 pointer-events-none z-10 flex items-center gap-2">
                     <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" className="w-4 h-4" alt="Google" />
-                    <span>Google Viewer</span>
+                    <span>Google Viewer (Remote)</span>
                 </div>
             </div>
         );
