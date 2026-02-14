@@ -43,11 +43,11 @@ const getFileType = (fileName: string): Document['type'] => {
 };
 
 const sanitizeFileName = (fileName: string): string => {
-  // 1. Normalize unicode characters (e.g. tiếng việt có dấu -> không dấu)
+  // Chuyển tiếng Việt có dấu thành không dấu
   let str = fileName.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  // 2. Replace spaces with underscores
+  // Thay thế khoảng trắng bằng gạch dưới
   str = str.replace(/\s+/g, '_');
-  // 3. Remove any non-alphanumeric characters except dots, underscores, and hyphens
+  // Chỉ giữ lại ký tự chữ, số, gạch dưới, gạch ngang và dấu chấm
   str = str.replace(/[^a-zA-Z0-9._-]/g, '');
   return str;
 };
@@ -110,33 +110,39 @@ export const DocumentList: React.FC<DocumentListProps> = ({
 
     try {
         const originalName = file.name;
+        // Clean filename strictly to avoid URL encoding issues in viewers
         const cleanName = sanitizeFileName(originalName);
-        // Use a random prefix to avoid collisions
+        
+        // Use a random prefix to avoid collisions and cache issues
         const filePath = `${Date.now()}_${cleanName}`;
         let publicUrl = '';
         
         // 1. Upload to Supabase
         console.log(`[Upload] Starting upload for ${cleanName}...`);
+        
+        // FIX: Thêm contentType để Server trả về Header đúng (application/pdf, etc.)
+        // Nếu không có dòng này, file sẽ bị hiểu là application/octet-stream -> Trình duyệt sẽ bắt tải về thay vì Preview
         const { data: uploadData, error: uploadError } = await supabase.storage
             .from('documents')
             .upload(filePath, file, {
                 cacheControl: '3600',
-                upsert: false
+                upsert: false,
+                contentType: file.type // <--- QUAN TRỌNG: Thiết lập Response Header Content-Type
             });
 
         if (uploadError) {
-            console.warn('Supabase Storage upload failed. Using Local Fallback.', uploadError);
+            console.warn('Supabase Storage upload failed.', uploadError);
             
-            let errorMsg = `Cảnh báo: Không thể lưu file lên server (${uploadError.message}).`;
+            let errorMsg = `Lỗi Server: ${uploadError.message}.`;
             
-            // Detect RLS Policy Error and give friendly advice
+            // Suggest fixes for common RLS errors
             if (uploadError.message.includes('row-level security') || uploadError.message.includes('violates')) {
-                errorMsg = `Lỗi quyền truy cập (RLS): Server từ chối nhận file. Vui lòng chạy script trong 'supabase_setup.sql' để mở quyền Upload cho người dùng (Anon).`;
+                errorMsg = `Lỗi Quyền (RLS): Server từ chối nhận file. Vui lòng chạy lại script 'supabase_setup.sql' để cấp quyền.`;
             }
             
-            setUploadWarning(`${errorMsg} File sẽ chỉ được lưu tạm trong bộ nhớ máy này (người khác sẽ không thấy).`);
+            setUploadWarning(`${errorMsg} File này sẽ KHÔNG xem được trên máy khác.`);
             
-            // Fallback to local Blob URL
+            // Fallback to local Blob URL (Only visible to uploader)
             publicUrl = URL.createObjectURL(file);
         } else {
             const storagePath = uploadData?.path || filePath;
@@ -151,16 +157,15 @@ export const DocumentList: React.FC<DocumentListProps> = ({
         const newDocId = Date.now().toString();
         const newDoc: Document = {
             id: newDocId,
-            name: originalName,
+            name: originalName, // Display name can remain pretty
             type: getFileType(originalName),
             size: formatFileSize(file.size),
             updatedAt: new Date().toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }),
             ownerId: currentUser.id,
-            url: publicUrl
+            url: publicUrl // This is the crucial link for other users
         };
 
-        // 3. IMPORTANT: Save to IndexedDB immediately 
-        // This ensures the uploader can preview it instantly even if RLS failed
+        // 3. IMPORTANT: Save to IndexedDB immediately for local speed
         await saveFileToLocal(newDocId, file);
 
         onAddDocument(newDoc);
@@ -238,10 +243,10 @@ export const DocumentList: React.FC<DocumentListProps> = ({
       </div>
 
       {uploadWarning && (
-          <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg flex items-start gap-3 text-sm animate-in slide-in-from-top-2">
+          <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg flex items-start gap-3 text-sm animate-in slide-in-from-top-2">
              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-             <div>{uploadWarning}</div>
-             <button onClick={() => setUploadWarning(null)} className="ml-auto text-yellow-600 hover:text-yellow-800 font-bold">✕</button>
+             <div className="flex-1">{uploadWarning}</div>
+             <button onClick={() => setUploadWarning(null)} className="ml-auto text-red-600 hover:text-red-800 font-bold">✕</button>
           </div>
       )}
 
@@ -287,7 +292,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                         <div>
                           <div className="flex items-center gap-2">
                               <span className="font-medium text-sm block text-gray-800">{doc.name}</span>
-                              {isLocalBlob && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded border border-orange-200 font-bold" title="File này chưa được lưu lên Server (Local Only)">Unsynced</span>}
+                              {isLocalBlob && <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded border border-red-200 font-bold" title="Lỗi: File chưa được tải lên Server. Chỉ xem được trên máy này.">Lỗi Sync</span>}
                           </div>
                           <div className="flex items-center gap-2 mt-0.5">
                              <span className="text-xs text-gray-400 uppercase">{doc.type}</span>
@@ -303,15 +308,6 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                                    >
                                       {copiedId === doc.id ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
                                    </button>
-                                   <a 
-                                      href={doc.url} 
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="p-1 text-gray-400 hover:text-emerald-500 rounded"
-                                      title="Mở URL gốc trong tab mới (Kiểm tra Link)"
-                                   >
-                                      <Globe className="w-3 h-3" />
-                                   </a>
                                 </div>
                              )}
                           </div>

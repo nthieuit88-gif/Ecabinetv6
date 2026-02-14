@@ -48,7 +48,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   const [loadError, setLoadError] = useState<string | null>(null);
   
   // Viewer Type State
-  const [viewerType, setViewerType] = useState<'local-pdf' | 'local-docx' | 'google' | 'microsoft' | 'none'>('none');
+  const [viewerType, setViewerType] = useState<'local-pdf' | 'local-docx' | 'google' | 'microsoft' | 'native-frame' | 'none'>('none');
   const [isLocalLoaded, setIsLocalLoaded] = useState(false);
 
   // Demo file IDs that are allowed to show mock content
@@ -165,16 +165,12 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     setIsLocalLoaded(false);
 
     // 1. Check Local Cache (IndexedDB)
-    // Only attempt local render if we are 100% sure we have the binary data (Blob).
     let fileBlob: Blob | null = uploadedFiles[previewDoc.id] || null;
-    
     if (!fileBlob) {
-        try {
-            fileBlob = await getFileFromLocal(previewDoc.id);
-        } catch (e) { console.error("DB Error", e); }
+        try { fileBlob = await getFileFromLocal(previewDoc.id); } catch (e) {}
     }
 
-    // 2. Render Local Content (If Blob exists in Cache)
+    // 2. Local Render (Priority 1)
     if (fileBlob) {
         setIsLocalLoaded(true);
         const arrayBuffer = await fileBlob.arrayBuffer();
@@ -182,11 +178,12 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         if (previewDoc.type === 'doc') {
              try {
                 const result = await mammoth.convertToHtml({ arrayBuffer });
-                if (!result.value) throw new Error("Empty result from conversion");
-                setDocxContent(result.value);
-                setViewerType('local-docx');
-                setIsLoadingPreview(false);
-                return;
+                if (result.value) {
+                    setDocxContent(result.value);
+                    setViewerType('local-docx');
+                    setIsLoadingPreview(false);
+                    return;
+                }
              } catch (e) { console.warn("Mammoth failed", e); }
         } else if (previewDoc.type === 'pdf') {
              try {
@@ -205,41 +202,46 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                 return;
              } catch (e) { console.warn("PDF load failed", e); }
         }
-        // If XLS/PPT is found locally, we fall through to remote viewer 
-        // because we don't have a good local XLS/PPT renderer in React without heavy libs.
     }
 
-    // 3. Remote URL Strategy (The Fix for Cross-IP/CORS)
-    // Instead of trying to 'fetch' and getting blocked by CORS,
-    // we directly assign the URL to Google/Microsoft Viewers (iframe).
-    if (previewDoc.url && !previewDoc.url.startsWith('blob:')) {
+    // 3. Remote URL Strategy
+    if (previewDoc.url) {
         
-        console.log(`[Preview] Using Remote Viewer for: ${previewDoc.name}`);
-        
-        // Strategy A: Microsoft Office Viewer (Best for Office Files)
-        if (['doc', 'xls', 'ppt'].includes(previewDoc.type)) {
-            setViewerType('microsoft');
+        // CHECK: Is it a Blob URL but we don't have the blob?
+        // This happens if User A uploads (gets blob:url), User B opens it (sees blob:url but has no file)
+        if (previewDoc.url.startsWith('blob:') && !fileBlob) {
+            setLoadError("File chưa đồng bộ. Người upload cần tải lại file này.");
             setIsLoadingPreview(false);
             return;
         }
 
-        // Strategy B: Google Viewer (Best for PDF and Fallback)
-        setViewerType('google');
-        setIsLoadingPreview(false);
-        
-        // Optional: Attempt to fetch in background to cache for NEXT time (Silent, non-blocking)
-        fetch(previewDoc.url)
-            .then(res => {
-                if(res.ok) return res.blob();
-                throw new Error("Fetch failed");
-            })
-            .then(blob => saveFileToLocal(previewDoc.id, blob))
-            .catch(() => console.log("Background cache attempt skipped (likely CORS). Viewer will handle it."));
+        if (!previewDoc.url.startsWith('blob:')) {
+             console.log(`[Preview] Using Remote Viewer for: ${previewDoc.name}`);
 
-        return;
+             // Strategy A: Microsoft Office Viewer (Doc/Xls/Ppt)
+             if (['doc', 'xls', 'ppt'].includes(previewDoc.type)) {
+                 setViewerType('microsoft');
+                 setIsLoadingPreview(false);
+                 return;
+             }
+             
+             // Strategy B: Native Browser Frame (Best for PDF if public)
+             // Google Viewer is often flaky with "No Preview Available". 
+             // Native iframe works well for Supabase public URLs.
+             if (previewDoc.type === 'pdf') {
+                 setViewerType('native-frame');
+                 setIsLoadingPreview(false);
+                 return;
+             }
+
+             // Fallback for others
+             setViewerType('google');
+             setIsLoadingPreview(false);
+             return;
+        }
     }
 
-    // 4. Fallback: Demo Content (Only for system demo files with no URL)
+    // 4. Fallback: Demo Content
     if (DEMO_FILE_IDS.includes(previewDoc.id)) {
         await new Promise(r => setTimeout(r, 600)); 
         generateMockContent(previewDoc);
@@ -249,12 +251,11 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     }
 
     // 5. Final Error
-    setLoadError("Không tìm thấy nội dung file. Vui lòng tải về để xem.");
+    setLoadError("Không thể tải nội dung file.");
     setIsLoadingPreview(false);
   };
 
   const generateMockContent = (doc: Document) => {
-    // Only used for System Demo Files
     let mockHtml = `
        <div class="prose prose-slate max-w-none bg-white p-12 min-h-[800px] shadow-sm mx-auto">
           <h1 class="text-3xl font-bold text-slate-800 mb-2">${doc.name}</h1>
@@ -359,7 +360,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                     rel="noopener noreferrer"
                     className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg inline-flex items-center gap-2 font-medium transition-colors"
                     >
-                    <Globe className="w-4 h-4" /> Mở trong trình duyệt
+                    <Globe className="w-4 h-4" /> Mở tab mới
                     </a>
                     <a 
                     href={previewDoc.url} 
@@ -375,10 +376,32 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
        );
     }
 
-    // --- RENDER BASED ON VIEWER TYPE ---
+    // --- REMOTE VIEWERS ---
 
-    // 1. Microsoft Office Viewer (Doc/Xls/Ppt)
-    // Note: We use encodeURIComponent to handle filenames with spaces or special chars
+    // 1. Native Iframe (Best for PDF)
+    if (viewerType === 'native-frame' && previewDoc.url) {
+        return (
+             <div className="w-full h-full bg-slate-100 relative flex flex-col">
+                <object 
+                    data={previewDoc.url} 
+                    type="application/pdf" 
+                    className="w-full h-full"
+                >
+                    {/* Fallback inside Object tag if not supported */}
+                    <div className="flex flex-col items-center justify-center h-full text-slate-500">
+                        <p>Trình duyệt không hỗ trợ xem PDF trực tiếp.</p>
+                        <a href={previewDoc.url} target="_blank" className="text-blue-500 underline mt-2">Mở trong tab mới</a>
+                    </div>
+                </object>
+                <div className="absolute bottom-4 right-4 bg-white/90 px-3 py-1 rounded text-xs text-slate-500 shadow border border-slate-200 pointer-events-none z-10 flex items-center gap-2">
+                    <Globe className="w-3 h-3"/>
+                    <span>Native Viewer</span>
+                </div>
+            </div>
+        )
+    }
+
+    // 2. Microsoft Office Viewer
     if (viewerType === 'microsoft' && previewDoc.url) {
         return (
             <div className="w-full h-full bg-white relative flex flex-col">
@@ -396,7 +419,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         );
     }
 
-    // 2. Google Viewer (PDF / Generic)
+    // 3. Google Viewer (Fallback)
     if (viewerType === 'google' && previewDoc.url) {
         return (
             <div className="w-full h-full bg-white relative flex flex-col">
@@ -414,7 +437,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         );
     }
 
-    // 3. Local PDF Viewer (Only if file is in IndexedDB)
+    // 4. Local PDF Viewer
     if (viewerType === 'local-pdf' && pdfDoc) {
         return (
           <div className="flex flex-col h-full w-full bg-slate-900 rounded-none overflow-hidden relative shadow-2xl">
@@ -443,7 +466,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         );
     }
 
-    // 4. Local Docx Preview (Mammoth - Only if file is in IndexedDB)
+    // 5. Local Docx
     if (viewerType === 'local-docx' && docxContent) {
         return (
           <div className="bg-white text-slate-900 w-full h-full shadow-none overflow-y-auto px-8 py-8">
