@@ -1,38 +1,30 @@
--- SCRIPT CẤU HÌNH STORAGE (RESET & FIX ALL PERMISSIONS)
--- Chạy script này để XÓA các quyền cũ và CẤP QUYỀN MỚI cho phép upload/view 100%
+-- SCRIPT CẤU HÌNH STORAGE (SAFE MODE - FIX ERROR 42501)
+-- Script này sẽ thêm quyền truy cập mà KHÔNG cố gắng xóa các quyền cũ (tránh lỗi must be owner)
 
 -- 1. Đảm bảo Bucket 'documents' tồn tại và là Public
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('documents', 'documents', true)
 ON CONFLICT (id) DO UPDATE SET public = true;
 
--- 2. XÓA BỎ CÁC POLICY CŨ (Để tránh xung đột)
-DROP POLICY IF EXISTS "Public Access Documents" ON storage.objects;
-DROP POLICY IF EXISTS "Auth Upload Documents" ON storage.objects;
-DROP POLICY IF EXISTS "Anon Upload Documents" ON storage.objects;
-DROP POLICY IF EXISTS "Public Delete Documents" ON storage.objects;
-DROP POLICY IF EXISTS "Public Update Documents" ON storage.objects;
-DROP POLICY IF EXISTS "Give me access" ON storage.objects;
+-- 2. Tạo Policy mới cho phép TẤT CẢ (Upload/Select/Update/Delete)
+-- Sử dụng khối DO để kiểm tra xem policy đã tồn tại chưa, tránh lỗi khi chạy lại
 
--- 3. TẠO POLICY MỚI (CHO PHÉP TẤT CẢ)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies 
+        WHERE schemaname = 'storage' 
+        AND tablename = 'objects' 
+        AND policyname = 'eCabinet Full Access V6'
+    ) THEN
+        CREATE POLICY "eCabinet Full Access V6"
+        ON storage.objects FOR ALL
+        USING ( bucket_id = 'documents' )
+        WITH CHECK ( bucket_id = 'documents' );
+    END IF;
+END
+$$;
 
--- Quyền xem file (SELECT): Cho phép tất cả mọi người (kể cả chưa đăng nhập)
-CREATE POLICY "Public Access Documents" 
-ON storage.objects FOR SELECT 
-USING ( bucket_id = 'documents' );
-
--- Quyền upload file (INSERT): Cho phép tất cả (Authenticated + Anon)
--- Đây là fix quan trọng cho lỗi "new row violates..."
-CREATE POLICY "Universal Upload Documents" 
-ON storage.objects FOR INSERT 
-WITH CHECK ( bucket_id = 'documents' );
-
--- Quyền xóa file (DELETE): Cho phép tất cả (để thuận tiện cho demo)
-CREATE POLICY "Universal Delete Documents" 
-ON storage.objects FOR DELETE 
-USING ( bucket_id = 'documents' );
-
--- Quyền sửa file (UPDATE)
-CREATE POLICY "Universal Update Documents" 
-ON storage.objects FOR UPDATE
-USING ( bucket_id = 'documents' );
+-- Lưu ý: Policy trong Supabase hoạt động theo cơ chế OR. 
+-- Chỉ cần 1 policy cho phép là hành động được chấp nhận.
+-- Do đó không cần xóa các policy cũ gây lỗi quyền chủ sở hữu.

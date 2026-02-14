@@ -137,10 +137,10 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             
             // Suggest fixes for common RLS errors
             if (uploadError.message.includes('row-level security') || uploadError.message.includes('violates')) {
-                errorMsg = `Lỗi Quyền (RLS): Server từ chối nhận file. Vui lòng chạy lại script 'supabase_setup.sql' để cấp quyền.`;
+                errorMsg = `Lỗi Quyền (RLS). Đã chuyển sang chế độ Local. Hãy chạy script 'supabase_setup.sql' mới nhất để sửa triệt để.`;
             }
             
-            setUploadWarning(`${errorMsg} File này sẽ KHÔNG xem được trên máy khác.`);
+            setUploadWarning(`${errorMsg} File chỉ xem được trên máy của bạn.`);
             
             // Fallback to local Blob URL (Only visible to uploader)
             publicUrl = URL.createObjectURL(file);
