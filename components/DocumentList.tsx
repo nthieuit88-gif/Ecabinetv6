@@ -43,8 +43,11 @@ const getFileType = (fileName: string): Document['type'] => {
 };
 
 const sanitizeFileName = (fileName: string): string => {
+  // 1. Normalize unicode characters (e.g. tiếng việt có dấu -> không dấu)
   let str = fileName.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  // 2. Replace spaces with underscores
   str = str.replace(/\s+/g, '_');
+  // 3. Remove any non-alphanumeric characters except dots, underscores, and hyphens
   str = str.replace(/[^a-zA-Z0-9._-]/g, '');
   return str;
 };
@@ -108,6 +111,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     try {
         const originalName = file.name;
         const cleanName = sanitizeFileName(originalName);
+        // Use a random prefix to avoid collisions
         const filePath = `${Date.now()}_${cleanName}`;
         let publicUrl = '';
         
@@ -121,8 +125,18 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             });
 
         if (uploadError) {
-            console.warn('Supabase Storage upload failed. Using Local Fallback.', uploadError.message);
-            setUploadWarning(`Cảnh báo: Không thể lưu file lên server (${uploadError.message}). File sẽ chỉ được lưu trong bộ nhớ máy này.`);
+            console.warn('Supabase Storage upload failed. Using Local Fallback.', uploadError);
+            
+            let errorMsg = `Cảnh báo: Không thể lưu file lên server (${uploadError.message}).`;
+            
+            // Detect RLS Policy Error and give friendly advice
+            if (uploadError.message.includes('row-level security') || uploadError.message.includes('violates')) {
+                errorMsg = `Lỗi quyền truy cập (RLS): Server từ chối nhận file. Vui lòng chạy script trong 'supabase_setup.sql' để mở quyền Upload cho người dùng (Anon).`;
+            }
+            
+            setUploadWarning(`${errorMsg} File sẽ chỉ được lưu tạm trong bộ nhớ máy này (người khác sẽ không thấy).`);
+            
+            // Fallback to local Blob URL
             publicUrl = URL.createObjectURL(file);
         } else {
             const storagePath = uploadData?.path || filePath;
@@ -145,7 +159,8 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             url: publicUrl
         };
 
-        // 3. IMPORTANT: Save to IndexedDB immediately for this user (Admin)
+        // 3. IMPORTANT: Save to IndexedDB immediately 
+        // This ensures the uploader can preview it instantly even if RLS failed
         await saveFileToLocal(newDocId, file);
 
         onAddDocument(newDoc);
@@ -272,7 +287,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                         <div>
                           <div className="flex items-center gap-2">
                               <span className="font-medium text-sm block text-gray-800">{doc.name}</span>
-                              {isLocalBlob && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded border border-orange-200 font-bold" title="File này chưa được lưu lên Server">Unsynced</span>}
+                              {isLocalBlob && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded border border-orange-200 font-bold" title="File này chưa được lưu lên Server (Local Only)">Unsynced</span>}
                           </div>
                           <div className="flex items-center gap-2 mt-0.5">
                              <span className="text-xs text-gray-400 uppercase">{doc.type}</span>
