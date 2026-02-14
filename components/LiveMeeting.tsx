@@ -165,8 +165,6 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     setIsLocalLoaded(false);
 
     // 1. Check Local Cache (IndexedDB)
-    // Only attempt local render if we are 100% sure we have the binary data (Blob).
-    // This avoids CORS because the file is already inside the browser.
     let fileBlob: Blob | null = uploadedFiles[previewDoc.id] || null;
     
     if (!fileBlob) {
@@ -175,6 +173,26 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         } catch (e) { console.error("DB Error", e); }
     }
 
+    // 2. FETCH FROM SUPABASE IF MISSING (The Fix)
+    // If not in local DB, try to download and cache it now.
+    if (!fileBlob && previewDoc.url && !previewDoc.url.startsWith('blob:')) {
+        try {
+            console.log(`[Preview] Downloading file from Supabase: ${previewDoc.url}`);
+            const response = await fetch(previewDoc.url);
+            if (response.ok) {
+                fileBlob = await response.blob();
+                // Save to local IndexedDB for next time (Instant load)
+                await saveFileToLocal(previewDoc.id, fileBlob);
+                console.log("[Preview] Download success & cached.");
+            } else {
+                console.warn("[Preview] Download failed with status:", response.status);
+            }
+        } catch (err) {
+             console.warn("[Preview] Download error (CORS/Network), fallback to viewers.", err);
+        }
+    }
+
+    // 3. Render Local Content (If Blob exists)
     if (fileBlob) {
         setIsLocalLoaded(true);
         const arrayBuffer = await fileBlob.arrayBuffer();
@@ -205,13 +223,14 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
                 return;
              } catch (e) { console.warn("PDF load failed", e); }
         }
-        // If XLS/PPT is found locally, we can't easily render it with JS alone.
-        // We will fall through to the remote viewer strategy if a URL exists.
+        // If XLS/PPT and we have Blob, we can't easily render locally in JS.
+        // We will fall through to Remote Viewers.
     }
 
-    // 2. Remote URL Strategies (Supabase Links)
-    // IMPORTANT: We do NOT use fetch() here to avoid CORS errors.
-    // We let Google/Microsoft Viewers handle the URL directly.
+    // 4. Remote URL Fallback (Microsoft / Google Viewers)
+    // Used if: 
+    // a) File type is Office (XLS/PPT) even if we have Blob
+    // b) Fetch failed (CORS) but URL might be accessible via iframe
     if (previewDoc.url && !previewDoc.url.startsWith('blob:')) {
         
         // Strategy A: Microsoft Office Viewer (Best for Office Files)
@@ -227,7 +246,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         return;
     }
 
-    // 3. Fallback: Demo Content (Only for system demo files with no URL)
+    // 5. Fallback: Demo Content (Only for system demo files)
     if (DEMO_FILE_IDS.includes(previewDoc.id)) {
         await new Promise(r => setTimeout(r, 600)); 
         generateMockContent(previewDoc);
@@ -236,7 +255,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         return;
     }
 
-    // 4. Final Error
+    // 6. Final Error
     setLoadError("Không thể tải bản xem trước. Vui lòng tải về máy.");
     setIsLoadingPreview(false);
   };
@@ -326,7 +345,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
       return (
          <div className="flex flex-col items-center justify-center h-full text-slate-500">
            <Loader2 className="w-10 h-10 animate-spin mb-3 text-emerald-500" />
-           <p>Đang tải tài liệu...</p>
+           <p>Đang tải và xử lý tài liệu...</p>
         </div>
       );
     }
