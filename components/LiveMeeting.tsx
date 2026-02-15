@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare, Users, Share, MoreHorizontal, LayoutGrid, X, FileText, Plus, Eye, Download, ChevronRight, Search, UploadCloud, Loader2, ChevronLeft, Minus, ZoomIn, ZoomOut, Maximize, FileSpreadsheet, FileIcon, RefreshCw, AlertTriangle, ExternalLink, Info, Database, Globe } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare, Users, Share, MoreHorizontal, LayoutGrid, X, FileText, Plus, Eye, Download, ChevronRight, Search, UploadCloud, Loader2, ChevronLeft, Minus, ZoomIn, ZoomOut, Maximize, FileSpreadsheet, FileIcon, RefreshCw, AlertTriangle, ExternalLink, Info, Database, Globe, Vote } from 'lucide-react';
 import { Meeting, Document, User } from '../types';
 import { USERS, getUserById } from '../data';
 import mammoth from 'mammoth';
@@ -200,31 +200,8 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
              // Handle DOCX with docx-preview (High Fidelity)
              if (ext === 'docx') {
                  setViewerType('local-docx');
-                 // Wait for render cycle to ensure container exists, but we set state first
+                 // Effect will handle rendering once state updates and ref is available
                  setIsLoadingPreview(false);
-                 setTimeout(async () => {
-                    if (docxContainerRef.current) {
-                        try {
-                            docxContainerRef.current.innerHTML = ""; // Clear previous
-                            
-                            // Robust import handling for esm.sh CJS/ESM interop
-                            const renderAsync = (docxPreview as any).renderAsync || (docxPreview as any).default?.renderAsync;
-
-                            if (typeof renderAsync === 'function') {
-                                await renderAsync(arrayBuffer, docxContainerRef.current, undefined, {
-                                    className: "docx-wrapper",
-                                    inWrapper: true, 
-                                    ignoreWidth: false,
-                                });
-                            } else {
-                                throw new Error("renderAsync function not found in docx-preview module");
-                            }
-                        } catch (err) {
-                            console.error("DOCX Render error:", err);
-                            setLoadError("Lỗi hiển thị file DOCX. File có thể bị hỏng.");
-                        }
-                    }
-                 }, 100);
                  return;
              } 
              // Handle Legacy DOC with Mammoth (Low Fidelity fallback)
@@ -260,9 +237,6 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
 
     // 3. Remote URL Strategy
     if (previewDoc.url) {
-        
-        // CHECK: Is it a Blob URL but we don't have the blob?
-        // This happens if User A uploads (gets blob:url), User B opens it (sees blob:url but has no file)
         if (previewDoc.url.startsWith('blob:') && !fileBlob) {
             setLoadError("File chưa đồng bộ. Người upload cần tải lại file này.");
             setIsLoadingPreview(false);
@@ -270,25 +244,16 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         }
 
         if (!previewDoc.url.startsWith('blob:')) {
-             console.log(`[Preview] Using Remote Viewer for: ${previewDoc.name}`);
-
-             // Strategy A: Microsoft Office Viewer (Doc/Xls/Ppt)
              if (['doc', 'xls', 'ppt'].includes(previewDoc.type)) {
                  setViewerType('microsoft');
                  setIsLoadingPreview(false);
                  return;
              }
-             
-             // Strategy B: Native Browser Frame (Best for PDF if public)
-             // Google Viewer is often flaky with "No Preview Available". 
-             // Native iframe works well for Supabase public URLs.
              if (previewDoc.type === 'pdf') {
                  setViewerType('native-frame');
                  setIsLoadingPreview(false);
                  return;
              }
-
-             // Fallback for others
              setViewerType('google');
              setIsLoadingPreview(false);
              return;
@@ -329,6 +294,51 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         loadContent();
     }
   }, [previewDoc]);
+
+  // --- DOCX RENDER EFFECT ---
+  useEffect(() => {
+    if (viewerType === 'local-docx' && isLocalLoaded && previewDoc) {
+        let active = true;
+        const render = async () => {
+            if (!docxContainerRef.current) return;
+            
+            // Get blob again
+            let fileBlob = uploadedFiles[previewDoc.id];
+            if (!fileBlob) {
+                try { fileBlob = await getFileFromLocal(previewDoc.id); } catch(e) {}
+            }
+            if (!fileBlob || !active) return;
+            
+            // Clear previous
+            docxContainerRef.current.innerHTML = "";
+            const arrayBuffer = await fileBlob.arrayBuffer();
+            if (!active) return;
+
+            try {
+                 // Robust import access for esm.sh which might bundle as default or named
+                 const renderAsyncFn = (docxPreview as any).renderAsync || (docxPreview as any).default?.renderAsync;
+                 
+                 if (typeof renderAsyncFn === 'function') {
+                    await renderAsyncFn(arrayBuffer, docxContainerRef.current, undefined, {
+                        className: "docx-wrapper",
+                        inWrapper: true, 
+                        ignoreWidth: false,
+                    });
+                 } else {
+                    console.error("renderAsync not found in docx-preview", docxPreview);
+                    setLoadError("Lỗi thư viện hiển thị DOCX.");
+                 }
+            } catch (err) {
+                console.error("DOCX Render error:", err);
+                setLoadError("Lỗi hiển thị file DOCX. File có thể bị hỏng.");
+            }
+        };
+        
+        // Small delay to ensure DOM is ready
+        const timer = setTimeout(render, 50);
+        return () => { active = false; clearTimeout(timer); };
+    }
+  }, [viewerType, isLocalLoaded, previewDoc, uploadedFiles]);
 
   // Render PDF Canvas (Only for Local PDF)
   useEffect(() => {
@@ -828,6 +838,14 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
 
          <button className="p-4 rounded-xl bg-slate-700/50 text-white hover:bg-slate-600 transition-all" title="Chia sẻ màn hình">
             <Share className="w-5 h-5" />
+         </button>
+
+         {/* Voting Button - New Feature */}
+         <button 
+            className="p-4 rounded-xl bg-slate-700/50 text-yellow-400 hover:bg-slate-600 transition-all shadow-sm shadow-yellow-500/10" 
+            title="Biểu quyết"
+         >
+            <Vote className="w-5 h-5" />
          </button>
          
          <button 
