@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { Shield, User as UserIcon, LogIn, MonitorPlay, Lock, Loader2, AlertTriangle, Mail, X } from 'lucide-react';
+import { Shield, User as UserIcon, LogIn, MonitorPlay, Lock, Loader2, AlertTriangle, Mail, X, KeyRound, ArrowRight } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 
 interface LoginScreenProps {
@@ -18,42 +18,41 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onSelectUser })
   const [infoMessage, setInfoMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
+  
+  // New State for Manual Password Entry
+  const [showPasswordInput, setShowPasswordInput] = useState(false);
+  const [manualPassword, setManualPassword] = useState('');
 
-  // Function to perform login automatically
-  const performAutoLogin = async (user: User, pass: string) => {
+  // Function to perform login
+  const performLogin = async (user: User, pass: string) => {
     setIsLoading(true);
     setError('');
     setInfoMessage('');
     setIsRegistering(false);
 
     try {
-      // 1. Try to Login
-      const { error: authError } = await supabase.auth.signInWithPassword({
+      // 1. Try to Login with Supabase
+      const { data: signInData, error: authError } = await supabase.auth.signInWithPassword({
         email: user.email,
         password: pass
       });
 
       if (authError) {
-        // Handle "Email not confirmed"
-        if (authError.message.includes("Email not confirmed")) {
-            setInfoMessage("Tài khoản này cần xác thực email trước khi vào.");
-            setIsLoading(false);
-            return;
-        }
-
-        // CRITICAL: Handle "Email logins are disabled"
-        // This allows access even if Supabase config is restrictive (Offline/Demo Mode)
-        if (authError.message.includes("Email logins are disabled") || authError.message.includes("disabled")) {
-             console.warn("Supabase Auth disabled/restricted. Switching to Local Bypass Mode.");
-             onSelectUser(user); // Force login locally via App.tsx prop
-             return;
-        }
-
-        // 2. If login fails (invalid credentials), try Auto-Register
+        // Case A: Invalid credentials (password changed or wrong input)
         if (authError.message === 'Invalid login credentials') {
-           console.log("Login failed, attempting auto-registration...");
-           setIsRegistering(true);
            
+           // If it was a manual Admin entry, show error directly without auto-register/fallback loop immediately
+           if (showPasswordInput) {
+               setError("Mật khẩu không chính xác. Vui lòng thử lại.");
+               setIsLoading(false);
+               setShowPasswordInput(true); // Keep form open
+               return;
+           }
+
+           // Only attempt auto-register/fallback for User auto-login flows
+           console.log("Login failed (Invalid credentials), attempting auto-registration or bypass...");
+           
+           setIsRegistering(true);
            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
              email: user.email,
              password: pass,
@@ -66,58 +65,67 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onSelectUser })
            });
 
            if (signUpError) {
-             // If disabled during signup too
-             if (signUpError.message.includes("disabled")) {
-                 onSelectUser(user);
-                 return;
-             }
-
-             if (signUpError.message.includes("already registered")) {
-                // This means password was wrong for an existing user
-                throw new Error("Mật khẩu hệ thống đã bị thay đổi, không thể tự đăng nhập.");
-             }
-             throw signUpError;
+             console.warn("Auto-registration failed:", signUpError.message);
+             console.log("Switching to Local Login Mode due to Auth failure.");
+             onSelectUser(user); // FORCE LOCAL LOGIN
+             return;
            }
 
-           if (signUpData.session) {
-             return; // Success (handled by App.tsx)
-           } else if (signUpData.user && !signUpData.session) {
-             // If signup success but no session (maybe confirm required), just let them in locally for now
-             // since we are in "Auto Login" mode
+           if (signUpData.session || signUpData.user) {
              onSelectUser(user);
              return;
            }
-        } else {
-          throw authError;
+        } 
+        
+        // Case B: Other errors (Network, Disabled, etc.) -> Force Local Login
+        else {
+            console.warn("Supabase Auth Error:", authError.message);
+            onSelectUser(user);
+            return;
         }
+      } else {
+          // Login Successful
+          onSelectUser(user);
       }
-      // Success (App.tsx handles session change)
     } catch (err: any) {
-      console.error("Auto Login Error:", err);
-      // Fallback for any other weird auth errors to ensure access
-      if (err.message && (err.message.includes("disabled") || err.message.includes("Auth"))) {
-         onSelectUser(user);
-         return;
-      }
-      setError(err.message || 'Lỗi đăng nhập.');
-      setIsLoading(false);
-      setIsRegistering(false);
+      console.error("Login Exception:", err);
+      // Fallback for ANY error to ensure access
+      onSelectUser(user);
     }
   };
 
   const handleUserClick = (user: User) => {
     setSelectedUser(user);
+    setError('');
+    setInfoMessage('');
     
-    // Determine password based on role (Hardcoded for convenience as requested)
-    const autoPass = user.role === 'admin' ? 'Longphu25##' : 'Longphu26##';
-    
-    // Trigger Auto Login immediately
-    performAutoLogin(user, autoPass);
+    if (user.role === 'admin') {
+        // ADMIN: Show Password Form
+        setShowPasswordInput(true);
+        setManualPassword(''); // Reset password field
+        setIsLoading(false);
+    } else {
+        // USER: Auto Login
+        setShowPasswordInput(false);
+        const autoPass = 'Longphu25##';
+        performLogin(user, autoPass);
+    }
+  };
+
+  const handleManualSubmit = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!selectedUser) return;
+      
+      // Hide input temporarily while loading, but keep state true in case of error to show it again
+      setIsLoading(true); 
+      performLogin(selectedUser, manualPassword);
   };
 
   const handleCancel = () => {
-    if (isLoading) return; // Prevent cancelling while processing
+    if (isLoading && !showPasswordInput) return; // Prevent cancelling while processing auto-login
     setSelectedUser(null);
+    setShowPasswordInput(false);
+    setManualPassword('');
     setError('');
     setInfoMessage('');
   };
@@ -150,7 +158,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onSelectUser })
             Phòng Họp Không Giấy
           </h1>
           <p className="mt-4 text-slate-400 text-lg font-light tracking-wider uppercase border-t border-slate-700 pt-4 px-8">
-            Hệ thống quản lý eCabinet <span className="text-emerald-500 font-bold">v6.0</span> (Auto Login)
+            Hệ thống quản lý eCabinet <span className="text-emerald-500 font-bold">v6.0</span>
           </p>
         </div>
 
@@ -179,7 +187,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onSelectUser })
                           <div>
                             <h3 className="font-bold text-slate-200 group-hover:text-purple-300 transition-colors">{user.name}</h3>
                             <span className="inline-block mt-1 text-[10px] font-bold bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded border border-purple-500/30">
-                              Bấm để vào ngay
+                              Yêu cầu mật khẩu
                             </span>
                           </div>
                           <Lock className="w-4 h-4 text-slate-500 ml-auto group-hover:text-purple-400" />
@@ -227,37 +235,61 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ users, onSelectUser })
         </div>
       </div>
 
-      {/* Auto Login Loading Overlay */}
+      {/* Login Overlay (Auto or Manual) */}
       {selectedUser && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
             <div className={`bg-slate-900 border ${selectedUser.role === 'admin' ? 'border-purple-500/30' : 'border-emerald-500/30'} rounded-2xl shadow-2xl w-full max-w-sm p-8 flex flex-col items-center relative animate-in zoom-in-95 duration-300`}>
                 
-                {/* Close button only shows if error occurs or stuck */}
-                {(error || infoMessage) && (
-                    <button onClick={handleCancel} className="absolute top-2 right-2 p-2 text-slate-500 hover:text-white"><X/></button>
-                )}
+                <button onClick={handleCancel} className="absolute top-2 right-2 p-2 text-slate-500 hover:text-white"><X/></button>
 
                 <div className="relative mb-6">
                     <div className={`w-20 h-20 rounded-full flex items-center justify-center border-4 ${selectedUser.role === 'admin' ? 'border-purple-500/30 bg-purple-500/10' : 'border-emerald-500/10 bg-emerald-500/10'}`}>
                         {selectedUser.role === 'admin' ? <Shield className="w-10 h-10 text-purple-500" /> : <UserIcon className="w-10 h-10 text-emerald-500" />}
                     </div>
-                    {isLoading && (
+                    {isLoading && !showPasswordInput && (
                         <div className="absolute inset-0 rounded-full border-t-4 border-white animate-spin"></div>
                     )}
                 </div>
 
-                <h3 className="text-xl font-bold text-white mb-2">{selectedUser.name}</h3>
+                <h3 className="text-xl font-bold text-white mb-1">{selectedUser.name}</h3>
+                <p className="text-xs text-slate-400 mb-6 uppercase tracking-widest">{selectedUser.role === 'admin' ? 'Administrator' : 'User'}</p>
                 
-                {!error && !infoMessage && (
-                    <p className="text-slate-400 animate-pulse text-sm">Đang truy cập hệ thống...</p>
+                {/* AUTO LOGIN STATUS */}
+                {isLoading && !showPasswordInput && (
+                   <div className="text-center">
+                      <p className="text-emerald-400 animate-pulse text-sm mb-2">Đang xác thực hệ thống...</p>
+                      {isRegistering && (
+                          <p className="text-[10px] text-blue-400">Khởi tạo tài khoản lần đầu...</p>
+                      )}
+                   </div>
                 )}
 
-                {isRegistering && (
-                    <p className="text-[10px] text-blue-400 mt-2">Đang khởi tạo tài khoản lần đầu...</p>
+                {/* MANUAL PASSWORD FORM (For Admin) */}
+                {showPasswordInput && !isLoading && (
+                    <form onSubmit={handleManualSubmit} className="w-full space-y-4 animate-in slide-in-from-bottom-4">
+                        <div className="relative">
+                            <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                            <input 
+                                type="password"
+                                autoFocus
+                                placeholder="Nhập mật khẩu quản trị"
+                                value={manualPassword}
+                                onChange={(e) => setManualPassword(e.target.value)}
+                                className="w-full bg-slate-800 border border-slate-700 text-white text-sm rounded-lg pl-10 pr-4 py-3 focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-all placeholder:text-slate-600"
+                            />
+                        </div>
+                        <button 
+                            type="submit"
+                            className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold text-sm shadow-lg shadow-purple-900/30 transition-all flex items-center justify-center gap-2 group"
+                        >
+                            Đăng Nhập <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                        </button>
+                    </form>
                 )}
 
+                {/* ERROR DISPLAY */}
                 {error && (
-                    <div className="mt-4 bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-start gap-2 text-red-400 text-sm w-full">
+                    <div className="mt-4 bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-start gap-2 text-red-400 text-sm w-full animate-in shake">
                         <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> 
                         <span>{error}</span>
                     </div>
