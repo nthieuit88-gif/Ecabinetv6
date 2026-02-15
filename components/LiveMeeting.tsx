@@ -3,6 +3,7 @@ import { Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare, Users, Share, Mo
 import { Meeting, Document, User } from '../types';
 import { USERS, getUserById } from '../data';
 import mammoth from 'mammoth';
+import * as docxPreview from 'docx-preview';
 import * as pdfjsLib from 'pdfjs-dist';
 import { getFileFromLocal, saveFileToLocal } from '../utils/indexedDB';
 
@@ -44,11 +45,14 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
+  // Ref specific for DOCX Preview
+  const docxContainerRef = useRef<HTMLDivElement>(null);
+  
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   
   // Viewer Type State
-  const [viewerType, setViewerType] = useState<'local-pdf' | 'local-docx' | 'google' | 'microsoft' | 'native-frame' | 'none'>('none');
+  const [viewerType, setViewerType] = useState<'local-pdf' | 'local-docx' | 'local-doc-legacy' | 'google' | 'microsoft' | 'native-frame' | 'none'>('none');
   const [isLocalLoaded, setIsLocalLoaded] = useState(false);
 
   // Demo file IDs that are allowed to show mock content
@@ -190,17 +194,51 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     if (fileBlob) {
         setIsLocalLoaded(true);
         const arrayBuffer = await fileBlob.arrayBuffer();
+        const ext = previewDoc.name.split('.').pop()?.toLowerCase();
 
         if (previewDoc.type === 'doc') {
-             try {
-                const result = await mammoth.convertToHtml({ arrayBuffer });
-                if (result.value) {
-                    setDocxContent(result.value);
-                    setViewerType('local-docx');
-                    setIsLoadingPreview(false);
-                    return;
-                }
-             } catch (e) { console.warn("Mammoth failed", e); }
+             // Handle DOCX with docx-preview (High Fidelity)
+             if (ext === 'docx') {
+                 setViewerType('local-docx');
+                 // Wait for render cycle to ensure container exists, but we set state first
+                 setIsLoadingPreview(false);
+                 setTimeout(async () => {
+                    if (docxContainerRef.current) {
+                        try {
+                            docxContainerRef.current.innerHTML = ""; // Clear previous
+                            
+                            // Robust import handling for esm.sh CJS/ESM interop
+                            const renderAsync = (docxPreview as any).renderAsync || (docxPreview as any).default?.renderAsync;
+
+                            if (typeof renderAsync === 'function') {
+                                await renderAsync(arrayBuffer, docxContainerRef.current, undefined, {
+                                    className: "docx-wrapper",
+                                    inWrapper: true, 
+                                    ignoreWidth: false,
+                                });
+                            } else {
+                                throw new Error("renderAsync function not found in docx-preview module");
+                            }
+                        } catch (err) {
+                            console.error("DOCX Render error:", err);
+                            setLoadError("Lỗi hiển thị file DOCX. File có thể bị hỏng.");
+                        }
+                    }
+                 }, 100);
+                 return;
+             } 
+             // Handle Legacy DOC with Mammoth (Low Fidelity fallback)
+             else {
+                 try {
+                    const result = await mammoth.convertToHtml({ arrayBuffer });
+                    if (result.value) {
+                        setDocxContent(result.value);
+                        setViewerType('local-doc-legacy');
+                        setIsLoadingPreview(false);
+                        return;
+                    }
+                 } catch (e) { console.warn("Mammoth failed", e); }
+             }
         } else if (previewDoc.type === 'pdf') {
              try {
                 const loadingTask = pdfjs.getDocument({ 
@@ -261,7 +299,7 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
     if (DEMO_FILE_IDS.includes(previewDoc.id)) {
         await new Promise(r => setTimeout(r, 600)); 
         generateMockContent(previewDoc);
-        setViewerType('local-docx');
+        setViewerType('local-doc-legacy');
         setIsLoadingPreview(false);
         return;
     }
@@ -507,8 +545,17 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
         );
     }
 
-    // 5. Local Docx
-    if (viewerType === 'local-docx' && docxContent) {
+    // 5. Local Docx (High Fidelity using docx-preview)
+    if (viewerType === 'local-docx') {
+        return (
+            <div className="bg-slate-200 text-slate-900 w-full h-full shadow-none overflow-y-auto">
+               <div ref={docxContainerRef} className="w-full min-h-full"></div>
+            </div>
+        );
+    }
+
+    // 6. Legacy Doc (Low Fidelity using Mammoth)
+    if (viewerType === 'local-doc-legacy' && docxContent) {
         return (
           <div className="bg-white text-slate-900 w-full h-full shadow-none overflow-y-auto px-8 py-8">
              {previewDoc.type === 'doc' && !previewDoc.url && (
@@ -541,232 +588,280 @@ export const LiveMeeting: React.FC<LiveMeetingProps> = ({ currentUser, meeting, 
   };
 
   return (
-    <div className="h-full flex flex-col bg-slate-900 text-white overflow-hidden relative">
-      {/* Hidden File Input */}
-      {isAdmin && (
-        <input 
-          type="file" 
-          ref={fileInputRef} 
-          className="hidden" 
-          accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
-          multiple
-          onChange={handleFileChange} 
-        />
-      )}
-
-      {/* Header */}
-      <div className="h-16 px-6 flex items-center justify-between border-b border-slate-700 bg-slate-800/50 backdrop-blur-sm z-10 shrink-0 relative transition-transform duration-500">
-        <div>
-          <h2 className="font-bold text-lg">{meeting.title}</h2>
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-            {meeting.startTime} - {meeting.endTime} • ID: {meeting.id}
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-           <span className="text-xs bg-slate-700 px-3 py-1 rounded-full font-medium">
-             {meeting.participants} đang tham gia
-           </span>
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <div className="flex-1 flex overflow-hidden relative pb-0">
+    <div className="flex h-screen bg-slate-900 text-white overflow-hidden relative select-none">
+      
+      {/* --- MAIN AREA --- */}
+      <div className={`flex-1 flex flex-col h-full transition-all duration-300 relative ${activeSidebar ? 'mr-80' : ''}`}>
         
-        {/* Video Grid */}
-        <div className="flex-1 p-4 grid grid-cols-2 gap-4 auto-rows-fr overflow-y-auto">
-           {/* Current User */}
-           <div className="bg-slate-800 rounded-xl relative overflow-hidden flex items-center justify-center group border border-slate-700">
-              {isCamOn ? (
-                <div className="absolute inset-0 bg-gradient-to-br from-slate-700 to-slate-800 flex items-center justify-center">
-                   <span className="text-slate-500 text-sm">Camera Stream Placeholder</span>
-                </div>
-              ) : (
-                <div className="w-24 h-24 rounded-full bg-emerald-600 flex items-center justify-center text-3xl font-bold shadow-lg">Tôi</div>
-              )}
-              <div className="absolute bottom-4 left-4 bg-black/40 backdrop-blur-md px-3 py-1 rounded-lg text-sm font-medium flex items-center gap-2">
-                Bạn {isMicOn ? '' : '(Đã tắt tiếng)'}
-              </div>
-              <div className="absolute top-4 right-4">
-                 {!isMicOn && <div className="bg-red-500/90 p-1.5 rounded-full"><MicOff className="w-4 h-4" /></div>}
+        {/* Header Overlay */}
+        <div className={`absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/70 to-transparent z-10 flex justify-between items-start transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+           <div>
+              <h1 className="text-lg font-bold text-white shadow-sm flex items-center gap-2">
+                 {meeting.title}
+                 <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded animate-pulse">LIVE</span>
+              </h1>
+              <p className="text-xs text-slate-300">ID: {meeting.id} • {meeting.participants} đang tham gia</p>
+           </div>
+           <div className="flex items-center gap-2">
+              <div className="flex -space-x-2">
+                 {otherParticipants.map(u => (
+                   <div key={u.id} className="w-8 h-8 rounded-full border-2 border-slate-800 bg-slate-700 flex items-center justify-center text-xs font-bold" title={u.name}>
+                     {u.name.charAt(0)}
+                   </div>
+                 ))}
+                 {USERS.length > 5 && (
+                   <div className="w-8 h-8 rounded-full border-2 border-slate-800 bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-400">
+                     +{meeting.participants - 4}
+                   </div>
+                 )}
               </div>
            </div>
-
-           {/* Other Participants */}
-           {otherParticipants.map((user) => (
-             <div key={user.id} className="bg-slate-800 rounded-xl relative overflow-hidden flex items-center justify-center border border-slate-700">
-                <div className="w-20 h-20 rounded-full bg-slate-600 flex items-center justify-center text-2xl font-bold text-slate-300">{user.name.charAt(0)}</div>
-                <div className="absolute bottom-4 left-4 bg-black/40 backdrop-blur-md px-3 py-1 rounded-lg text-sm font-medium">{user.name}</div>
-                {user.id === 'u2' && (
-                  <div className="absolute inset-0 border-2 border-emerald-500 rounded-xl pointer-events-none opacity-50"></div>
-                )}
-             </div>
-           ))}
         </div>
 
-        {/* Right Sidebar */}
-        {activeSidebar && (
-          <div className="w-80 bg-slate-800 border-l border-slate-700 flex flex-col animate-in slide-in-from-right duration-200 shadow-2xl z-20">
-            <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
-              <h3 className="font-bold">{activeSidebar === 'chat' ? 'Tin nhắn' : 'Tài liệu cuộc họp'}</h3>
-              <button onClick={() => setActiveSidebar(null)} className="hover:bg-slate-700 p-1 rounded"><X className="w-5 h-5" /></button>
-            </div>
-
-            {/* Chat Content */}
-            {activeSidebar === 'chat' && (
-              <>
-                <div className="flex-1 p-4 space-y-4 overflow-y-auto">
-                   <div className="text-xs text-center text-slate-500 my-4">Cuộc trò chuyện đã bắt đầu</div>
-                   <div className="flex gap-3">
-                      <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-xs font-bold shrink-0">A</div>
-                      <div>
-                        <div className="flex items-baseline gap-2"><span className="font-bold text-sm">Nguyễn Văn A</span><span className="text-xs text-slate-400">09:32</span></div>
-                        <p className="text-sm text-slate-300 mt-1">Mọi người đã xem tài liệu đính kèm chưa ạ?</p>
-                      </div>
-                   </div>
-                </div>
-                <div className="p-4 border-t border-slate-700 mt-auto">
-                   <div className="bg-slate-700 rounded-lg flex items-center p-2">
-                     <input type="text" placeholder="Gửi tin nhắn..." className="bg-transparent border-none outline-none text-sm text-white flex-1 px-2" />
-                     <button className="text-emerald-500 font-bold text-sm px-2">Gửi</button>
-                   </div>
-                </div>
-              </>
-            )}
-
-            {/* Docs Content */}
-            {activeSidebar === 'docs' && (
-              <div className="flex-1 flex flex-col overflow-hidden">
-                 <div className="p-4 flex-1 overflow-y-auto space-y-3">
-                    {isAdmin && (
-                      <button 
-                        onClick={() => setIsAddingDoc(!isAddingDoc)}
-                        className={`w-full py-2 border border-dashed ${isAddingDoc ? 'border-emerald-500 text-emerald-400 bg-emerald-500/10' : 'border-slate-600 text-slate-400 hover:text-white hover:border-slate-500 hover:bg-slate-700/50'} rounded-lg flex items-center justify-center gap-2 text-sm transition-all`}
-                      >
-                        {isAddingDoc ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                        {isAddingDoc ? 'Đóng' : 'Bổ sung tài liệu'}
-                      </button>
-                    )}
-
-                    {isAddingDoc && (
-                      <div className="bg-slate-700 rounded-lg p-2 space-y-2 animate-in slide-in-from-top-2 duration-200 border border-slate-600">
-                        <button onClick={handleUploadClick} className="w-full text-left px-3 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded flex items-center gap-2 mb-2 font-medium transition-colors">
-                           <UploadCloud className="w-4 h-4" /> Tải lên từ máy tính
-                        </button>
-                        <div className="border-t border-slate-600 my-2"></div>
-                        <div className="px-2 py-1 text-xs text-slate-400 font-medium uppercase">Chọn từ kho</div>
-                        {availableDocsToAdd.length > 0 ? (
-                           <div className="max-h-40 overflow-y-auto space-y-1">
-                             {availableDocsToAdd.map(doc => (
-                               <button key={doc.id} onClick={() => handleAddExistingDocument(doc.id)} className="w-full text-left px-2 py-1.5 text-sm hover:bg-slate-600 rounded flex items-center gap-2 truncate group">
-                                 <Plus className="w-3 h-3 text-slate-500 group-hover:text-emerald-400" />
-                                 <FileText className="w-3 h-3 text-slate-400" />
-                                 <span className="truncate text-slate-200">{doc.name}</span>
-                               </button>
-                             ))}
-                           </div>
-                        ) : (<div className="p-2 text-xs text-slate-500 text-center">Không còn tài liệu có sẵn</div>)}
-                      </div>
-                    )}
-
-                    <div className="space-y-2 mt-4">
-                       <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Đã đính kèm ({getAttachedDocsResolved().length})</h4>
-                       {getAttachedDocsResolved().map(doc => (
-                           <div key={doc.id} className="bg-slate-700/50 border border-slate-700 p-3 rounded-lg group hover:border-slate-600 transition-colors">
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex items-start gap-3 overflow-hidden">
-                                   <div className="p-2 bg-slate-800 rounded">
-                                      <FileText className={`w-5 h-5 ${['pdf', 'ppt'].includes(doc.type) ? 'text-red-400' : doc.type === 'xls' ? 'text-emerald-400' : 'text-blue-400'}`} />
-                                   </div>
-                                   <div className="overflow-hidden">
-                                      <h4 className="text-sm font-medium truncate text-slate-200" title={doc.name}>{doc.name}</h4>
-                                      <p className="text-xs text-slate-400">{doc.size} • {doc.type.toUpperCase()}</p>
-                                   </div>
-                                </div>
-                              </div>
-                              <div className="mt-3 flex gap-2">
-                                <button onClick={() => setPreviewDoc(doc)} className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors text-slate-300 hover:text-white">
-                                  <Eye className="w-3 h-3" /> Xem
-                                </button>
-                                {doc.url && (
-                                    <a href={doc.url} download target="_blank" className="flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-medium flex items-center justify-center gap-1 transition-colors text-slate-300 hover:text-white">
-                                      <Download className="w-3 h-3" /> Tải
-                                    </a>
-                                )}
-                              </div>
-                           </div>
-                         ))}
+        {/* Central Content (Document or Placeholder) */}
+        <div className="flex-1 bg-slate-900 relative flex flex-col overflow-hidden">
+           {previewDoc ? (
+             <div className="w-full h-full relative">
+                {renderPreviewContent()}
+                
+                {/* Close Doc Button */}
+                <button 
+                  onClick={() => setPreviewDoc(null)}
+                  className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-red-600 text-white rounded-full backdrop-blur-sm transition-colors z-20"
+                  title="Đóng tài liệu"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+             </div>
+           ) : (
+             <div className="flex-1 flex flex-col items-center justify-center text-slate-500 bg-[url('https://images.unsplash.com/photo-1557683316-973673baf926?q=80&w=2029&auto=format&fit=crop')] bg-cover bg-center relative">
+                <div className="absolute inset-0 bg-slate-900/90"></div>
+                <div className="relative z-10 text-center p-8">
+                    <div className="w-24 h-24 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse">
+                        <Video className="w-10 h-10 text-emerald-500" />
                     </div>
-                 </div>
-              </div>
-            )}
-          </div>
-        )}
+                    <h2 className="text-2xl font-bold text-white mb-2">Cuộc họp đang diễn ra</h2>
+                    <p className="text-slate-400 max-w-md mx-auto">Chọn một tài liệu từ danh sách bên phải để trình chiếu hoặc chia sẻ màn hình của bạn.</p>
+                </div>
+             </div>
+           )}
+        </div>
 
-        {/* Preview Modal Overlay */}
-        {previewDoc && (
-          <div className="absolute inset-0 z-50 bg-slate-900/95 backdrop-blur-md flex flex-col animate-in fade-in duration-200">
-            <div className="h-14 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-6 shrink-0 shadow-lg z-10">
-               <div className="flex items-center gap-3 text-white overflow-hidden">
-                  <div className="p-1.5 bg-emerald-500/20 rounded-lg">{getDocIcon(previewDoc.type)}</div>
-                  <span className="font-bold truncate text-slate-100">{previewDoc.name}</span>
-                  {(viewerType === 'google' || viewerType === 'microsoft') && !isLocalLoaded && <span className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded border border-blue-500/30">HQ Remote</span>}
-                  {isLocalLoaded && <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30 flex items-center gap-1"><Database className="w-3 h-3"/> Local DB</span>}
-               </div>
-               <div className="flex items-center gap-4 shrink-0">
-                  <div className="hidden md:flex items-center bg-slate-900 rounded-lg p-1 border border-slate-700">
-                     <button className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white" title="Thêm ghi chú"><Plus className="w-4 h-4" /></button>
-                     <span className="px-2 text-xs text-slate-400 font-mono">{previewDoc.type === 'pdf' ? Math.round(pdfScale * 100) + '%' : '100%'}</span>
-                     <button className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white"><MoreHorizontal className="w-4 h-4" /></button>
+      </div>
+
+      {/* --- RIGHT SIDEBAR --- */}
+      <div className={`fixed top-0 right-0 bottom-0 w-80 bg-white shadow-2xl z-30 transform transition-transform duration-300 flex flex-col border-l border-gray-200 ${activeSidebar ? 'translate-x-0' : 'translate-x-full'}`}>
+         
+         {/* Tabs */}
+         <div className="flex border-b border-gray-200 bg-gray-50">
+            <button 
+              onClick={() => setActiveSidebar('chat')}
+              className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 ${activeSidebar === 'chat' ? 'text-emerald-600 border-b-2 border-emerald-600 bg-white' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+               <MessageSquare className="w-4 h-4" /> Thảo luận
+            </button>
+            <button 
+              onClick={() => setActiveSidebar('docs')}
+              className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 ${activeSidebar === 'docs' ? 'text-emerald-600 border-b-2 border-emerald-600 bg-white' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+               <FileText className="w-4 h-4" /> Tài liệu ({attachedDocIds.length})
+            </button>
+            <button 
+               onClick={() => setActiveSidebar(null)}
+               className="p-3 text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+            >
+               <X className="w-5 h-5" />
+            </button>
+         </div>
+
+         {/* Sidebar Content */}
+         <div className="flex-1 overflow-y-auto bg-gray-50 p-4">
+            
+            {/* DOCUMENTS TAB */}
+            {activeSidebar === 'docs' && (
+               <div className="space-y-4">
+                  {/* Upload / Add Area */}
+                  <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                     <div className="flex gap-2">
+                        {isAdmin && (
+                          <>
+                            <input 
+                              type="file" 
+                              multiple 
+                              ref={fileInputRef} 
+                              className="hidden" 
+                              onChange={handleFileChange}
+                            />
+                            <button 
+                                onClick={handleUploadClick}
+                                className="flex-1 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold border border-emerald-200 flex items-center justify-center gap-1 transition-colors"
+                            >
+                                <UploadCloud className="w-3 h-3" /> Tải lên
+                            </button>
+                          </>
+                        )}
+                        <button 
+                            onClick={() => setIsAddingDoc(!isAddingDoc)}
+                            className="flex-1 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-bold border border-blue-200 flex items-center justify-center gap-1 transition-colors"
+                        >
+                            <Plus className="w-3 h-3" /> Từ kho
+                        </button>
+                     </div>
+
+                     {/* Picker from Library */}
+                     {isAddingDoc && (
+                        <div className="mt-3 pt-3 border-t border-gray-100 animate-in slide-in-from-top-2">
+                           <p className="text-xs font-bold text-gray-500 mb-2 uppercase">Chọn từ kho tài liệu:</p>
+                           <div className="max-h-40 overflow-y-auto space-y-1">
+                              {availableDocsToAdd.map(doc => (
+                                 <button 
+                                    key={doc.id}
+                                    onClick={() => handleAddExistingDocument(doc.id)}
+                                    className="w-full text-left px-2 py-1.5 hover:bg-gray-100 rounded text-xs text-gray-700 truncate flex items-center gap-2"
+                                 >
+                                    <Plus className="w-3 h-3 text-gray-400" /> {doc.name}
+                                 </button>
+                              ))}
+                              {availableDocsToAdd.length === 0 && <p className="text-xs text-gray-400 italic text-center py-2">Hết tài liệu khả dụng</p>}
+                           </div>
+                        </div>
+                     )}
                   </div>
-                  {previewDoc.url && (
-                    <a href={previewDoc.url} target="_blank" className="p-2 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white" title="Mở trong tab mới"><ExternalLink className="w-5 h-5"/></a>
-                  )}
-                  <button onClick={() => setPreviewDoc(null)} className="p-2 hover:bg-red-500/20 hover:text-red-500 rounded-full transition-colors"><X className="w-6 h-6" /></button>
+
+                  {/* List Attached Docs */}
+                  <div className="space-y-2">
+                     {getAttachedDocsResolved().map(doc => (
+                        <div 
+                           key={doc.id}
+                           className={`bg-white p-3 rounded-xl border transition-all cursor-pointer group hover:shadow-md ${previewDoc?.id === doc.id ? 'border-emerald-500 ring-1 ring-emerald-500' : 'border-gray-200 hover:border-emerald-300'}`}
+                           onClick={() => setPreviewDoc(doc)}
+                        >
+                           <div className="flex items-start gap-3">
+                              <div className="p-2 bg-gray-50 rounded-lg shrink-0">
+                                 {getDocIcon(doc.type)}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                 <h4 className={`text-sm font-bold truncate ${previewDoc?.id === doc.id ? 'text-emerald-700' : 'text-gray-800'}`}>{doc.name}</h4>
+                                 <div className="flex items-center gap-2 mt-1">
+                                    <span className="text-[10px] text-gray-400 uppercase bg-gray-100 px-1.5 py-0.5 rounded">{doc.type}</span>
+                                    <span className="text-[10px] text-gray-400">{doc.size}</span>
+                                 </div>
+                              </div>
+                              {previewDoc?.id === doc.id && (
+                                <div className="absolute top-2 right-2">
+                                   <span className="relative flex h-2 w-2">
+                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                   </span>
+                                </div>
+                              )}
+                           </div>
+                        </div>
+                     ))}
+                     {getAttachedDocsResolved().length === 0 && (
+                        <div className="text-center py-10 opacity-50">
+                           <FileText className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                           <p className="text-xs text-gray-500">Chưa có tài liệu nào</p>
+                        </div>
+                     )}
+                  </div>
                </div>
-            </div>
+            )}
 
-            <div className="flex-1 flex overflow-hidden relative">
-                <div className="flex-1 overflow-hidden relative flex items-center justify-center bg-slate-900/50 p-0 flex-col">
-                   {renderPreviewContent()}
-                </div>
+            {/* CHAT TAB (Mock UI) */}
+            {activeSidebar === 'chat' && (
+               <div className="flex flex-col h-full">
+                  <div className="flex-1 space-y-4">
+                     <div className="flex gap-2">
+                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-xs font-bold text-blue-600">A</div>
+                        <div className="bg-white p-3 rounded-2xl rounded-tl-none border border-gray-200 shadow-sm max-w-[85%]">
+                           <p className="text-xs text-gray-800">Chào mọi người, chúng ta bắt đầu điểm danh nhé.</p>
+                           <span className="text-[10px] text-gray-400 mt-1 block">08:00</span>
+                        </div>
+                     </div>
+                     <div className="flex gap-2 flex-row-reverse">
+                        <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-xs font-bold text-emerald-600">Tôi</div>
+                        <div className="bg-emerald-500 text-white p-3 rounded-2xl rounded-tr-none shadow-sm max-w-[85%]">
+                           <p className="text-xs">Đã rõ thưa sếp!</p>
+                           <span className="text-[10px] text-emerald-100 mt-1 block">08:01</span>
+                        </div>
+                     </div>
+                  </div>
+                  <div className="mt-4 pt-3 border-t border-gray-200">
+                     <div className="relative">
+                        <input 
+                           type="text" 
+                           placeholder="Nhập tin nhắn..." 
+                           className="w-full pl-4 pr-10 py-2.5 bg-white border border-gray-200 rounded-full text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                        />
+                        <button className="absolute right-1.5 top-1.5 p-1.5 bg-emerald-500 hover:bg-emerald-600 rounded-full text-white transition-colors">
+                           <ChevronRight className="w-4 h-4" />
+                        </button>
+                     </div>
+                  </div>
+               </div>
+            )}
 
-                {/* Right Sidebar List */}
-                <div className="w-28 md:w-36 bg-slate-900 border-l border-slate-800 p-2 z-30 shrink-0 overflow-y-auto hidden md:block">
-                   <div className="flex flex-col gap-3 pb-4">
-                      {getAttachedDocsResolved().map((doc) => {
-                        const isActive = previewDoc.id === doc.id;
-                        return (
-                          <button
-                            key={doc.id}
-                            onClick={() => setPreviewDoc(doc)}
-                            className={`group relative flex flex-col items-center gap-2 p-2 rounded-xl border transition-all w-full ${isActive ? 'bg-emerald-900/20 border-emerald-500/50 ring-1 ring-emerald-500/30' : 'bg-slate-800/40 border-slate-700 hover:bg-slate-800 hover:border-slate-600 opacity-60 hover:opacity-100'}`}
-                          >
-                             <div className={`p-1.5 rounded-lg transition-transform group-hover:scale-110 ${isActive ? 'bg-emerald-500/10' : 'bg-slate-700/50'}`}>{getDocIcon(doc.type)}</div>
-                             <span className={`text-[10px] font-medium truncate w-full text-center leading-tight ${isActive ? 'text-emerald-100' : 'text-slate-400'}`}>{doc.name}</span>
-                          </button>
-                        )
-                      })}
-                   </div>
-                </div>
-            </div>
-          </div>
-        )}
+         </div>
       </div>
 
-      <div className={`absolute bottom-0 left-0 right-0 h-20 bg-slate-800/95 backdrop-blur-md border-t border-slate-700 flex items-center justify-center gap-4 px-6 z-40 shrink-0 transition-transform duration-500 ease-in-out ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
-         <div className="flex items-center gap-3">
-            <button onClick={() => setIsMicOn(!isMicOn)} className={`p-4 rounded-full transition-all ${isMicOn ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}>{isMicOn ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}</button>
-            <button onClick={() => setIsCamOn(!isCamOn)} className={`p-4 rounded-full transition-all ${isCamOn ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}>{isCamOn ? <Video className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}</button>
-         </div>
-         <div className="w-px h-10 bg-slate-600 mx-2"></div>
-         <div className="flex items-center gap-3">
-            <button onClick={() => toggleSidebar('chat')} className={`p-3 rounded-xl hover:bg-slate-600 text-slate-200 transition-colors ${activeSidebar === 'chat' ? 'bg-emerald-600 text-white' : 'bg-slate-700/50'}`}><MessageSquare className="w-5 h-5" /></button>
-            <button onClick={() => toggleSidebar('docs')} className={`p-3 rounded-xl hover:bg-slate-600 text-slate-200 transition-colors ${activeSidebar === 'docs' ? 'bg-emerald-600 text-white' : 'bg-slate-700/50'}`}><FileText className="w-5 h-5" /></button>
-         </div>
-         <div className="w-px h-10 bg-slate-600 mx-2"></div>
-         <button onClick={onLeave} className="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-full font-bold flex items-center gap-2 transition-colors shadow-lg shadow-red-500/20"><PhoneOff className="w-5 h-5" /><span className="hidden md:inline">Rời cuộc họp</span></button>
+      {/* --- BOTTOM CONTROLS --- */}
+      <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 px-6 py-3 bg-slate-900/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl z-40 transition-all duration-500 ${showControls ? 'translate-y-0 opacity-100' : 'translate-y-24 opacity-0 pointer-events-none'}`}>
+         
+         <button 
+           onClick={() => setIsMicOn(!isMicOn)}
+           className={`p-4 rounded-xl transition-all ${isMicOn ? 'bg-slate-700/50 text-white hover:bg-slate-600' : 'bg-red-500 text-white hover:bg-red-600 shadow-lg shadow-red-500/30'}`}
+           title={isMicOn ? 'Tắt mic' : 'Bật mic'}
+         >
+            {isMicOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+         </button>
+         
+         <button 
+           onClick={() => setIsCamOn(!isCamOn)}
+           className={`p-4 rounded-xl transition-all ${isCamOn ? 'bg-slate-700/50 text-white hover:bg-slate-600' : 'bg-red-500 text-white hover:bg-red-600 shadow-lg shadow-red-500/30'}`}
+           title={isCamOn ? 'Tắt Camera' : 'Bật Camera'}
+         >
+            {isCamOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+         </button>
+
+         <div className="w-px h-8 bg-white/10 mx-2"></div>
+
+         <button className="p-4 rounded-xl bg-slate-700/50 text-white hover:bg-slate-600 transition-all" title="Chia sẻ màn hình">
+            <Share className="w-5 h-5" />
+         </button>
+         
+         <button 
+            onClick={() => toggleSidebar('chat')}
+            className={`p-4 rounded-xl transition-all relative ${activeSidebar === 'chat' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' : 'bg-slate-700/50 text-white hover:bg-slate-600'}`}
+            title="Trò chuyện"
+         >
+            <MessageSquare className="w-5 h-5" />
+            <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-slate-900"></span>
+         </button>
+
+         <button 
+            onClick={() => toggleSidebar('docs')}
+            className={`p-4 rounded-xl transition-all ${activeSidebar === 'docs' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' : 'bg-slate-700/50 text-white hover:bg-slate-600'}`}
+            title="Tài liệu"
+         >
+            <FileText className="w-5 h-5" />
+         </button>
+
+         <button className="p-4 rounded-xl bg-slate-700/50 text-white hover:bg-slate-600 transition-all" title="Khác">
+            <MoreHorizontal className="w-5 h-5" />
+         </button>
+
+         <div className="w-px h-8 bg-white/10 mx-2"></div>
+
+         <button 
+           onClick={onLeave}
+           className="px-6 py-4 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm tracking-wide transition-all shadow-lg shadow-red-600/30 flex items-center gap-2"
+         >
+            <PhoneOff className="w-5 h-5" />
+            <span className="hidden md:inline">Rời họp</span>
+         </button>
       </div>
+
     </div>
   );
 };

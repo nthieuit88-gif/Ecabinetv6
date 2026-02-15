@@ -42,6 +42,18 @@
       ::-webkit-scrollbar-thumb:hover {
         background: #94a3b8; 
       }
+      
+      /* DOCX Preview Styles */
+      .docx-wrapper {
+        background: #f1f5f9 !important;
+        padding: 20px 0 !important;
+      }
+      .docx-wrapper > section.docx-render {
+        margin: 0 auto !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+        background-color: white !important;
+        margin-bottom: 20px !important;
+      }
     </style>
   <script type="importmap">
 {
@@ -54,7 +66,8 @@
     "mammoth": "https://esm.sh/mammoth@1.6.0",
     "pdfjs-dist": "https://esm.sh/pdfjs-dist@3.11.174",
     "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.3",
-    "idb": "https://esm.sh/idb@8.0.0"
+    "idb": "https://esm.sh/idb@8.0.0",
+    "docx-preview": "https://esm.sh/docx-preview@0.3.2"
   }
 }
 </script>
